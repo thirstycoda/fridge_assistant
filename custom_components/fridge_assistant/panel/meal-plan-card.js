@@ -8,7 +8,9 @@
  * cooked meal to Fridge Assistant as a dish (choose how many portions, and
  * Freezer or Fridge) and prints a sticker for each portion. Meals already made show a tick.
  * Loose ingredients on the plan (notes such as "Avocado") get an "Eaten"
- * button that takes one of it out of Fridge Assistant.
+ * button that takes it out of Fridge Assistant: the amount at the start of
+ * the note ("40 g cannellini beans", "½ avocado", "1 tin chickpeas"), or one
+ * of the thing when there's none.
  *
  *   type: custom:fridge-assistant-meal-plan-card
  *   day: 0                          # 0 = today, 1 = tomorrow, ...
@@ -46,6 +48,33 @@ function fmtAmount(amount, unit) {
   if (unit === "g" || unit === "ml") return `${round(n)} ${unit}`;
   if (!unit || unit === "each") return `${round(n)}`;
   return `${round(n)} ${unit}${round(n) === 1 ? "" : "s"}`;
+}
+
+/* "40 g cannellini beans", "½ avocado", "2 sweet potatoes", "1 tin chickpeas"
+ * -> {quantity, unit, food}. Without an amount it's one of the thing. */
+const FRACTIONS = { "½": 0.5, "¼": 0.25, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125 };
+const AMOUNT_UNITS = [
+  "kg", "g", "grams?", "ml", "l", "litres?", "tsp", "teaspoons?", "tbsp", "tablespoons?", "cups?",
+  "tins?", "cans?", "jars?", "packs?", "handfuls?", "slices?", "pots?", "blocks?", "pieces?", "cloves?", "bunch(?:es)?",
+];
+const AMOUNT_RE = new RegExp(
+  `^\\s*(half(?:\\s+an?)?(?=\\s)|an?(?=\\s)|\\d+\\s*/\\s*\\d+|\\d+(?:[.,]\\d+)?(?:\\s*[½¼¾⅓⅔⅛])?|[½¼¾⅓⅔⅛])\\s*`
+  + `(?:(${AMOUNT_UNITS.join("|")})\\b\\.?\\s*)?(?:of\\s+)?(.+)$`, "i",
+);
+function parseAmount(text) {
+  const raw = String(text || "").trim();
+  const m = AMOUNT_RE.exec(raw);
+  if (!m || !m[3]) return { quantity: 1, unit: "each", food: raw };
+  let q = m[1].toLowerCase().replace(",", ".");
+  let quantity;
+  if (q.startsWith("half")) quantity = 0.5;
+  else if (q === "a" || q === "an") quantity = 1;
+  else if (q.includes("/")) { const [a, b] = q.split("/").map(Number); quantity = b ? a / b : 1; }
+  else {
+    const frac = Object.keys(FRACTIONS).find((f) => q.includes(f));
+    quantity = (parseFloat(q.replace(frac || "", "")) || 0) + (frac ? FRACTIONS[frac] : 0);
+  }
+  return { quantity: quantity || 1, unit: m[2] ? m[2].toLowerCase() : "each", food: m[3].trim() };
 }
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -195,7 +224,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
    * card remembers. */
   async _eaten(entry) {
     const id = String(entry.mealplan_id);
-    const food = String(entry.title || "").trim();
+    const amount = parseAmount(entry.title);
+    const food = amount.food;
     if (!food || this._busy.has(id) || this._done.has(id)) return;
     this._busy.add(id);
     this._notes.delete(id);
@@ -203,14 +233,14 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     try {
       const res = await this._hass.callWS({
         type: "call_service", domain: "fridge_assistant", service: "consume_ingredients",
-        service_data: { ingredients: [{ food, quantity: 1, unit: "each" }] }, return_response: true,
+        service_data: { ingredients: [{ food, quantity: amount.quantity, unit: amount.unit }] }, return_response: true,
       });
       const line = (res && res.response && res.response.lines && res.response.lines[0]) || {};
       const name = line.template || food;
       const unit = line.amount_unit;
       if (line.status === "taken" || line.status === "short") {
         const left = (line.taken || []).reduce((sum, t) => sum + (t.left || 0), 0);
-        const took = unit === "each" ? `1 ${name.toLowerCase()}` : `${fmtAmount(line.need, unit)} of ${name.toLowerCase()}`;
+        const took = unit === "each" ? `${fmtAmount(line.need, unit)} ${name.toLowerCase()}` : `${fmtAmount(line.need, unit)} of ${name.toLowerCase()}`;
         const rest = line.status === "short" ? " · that was the last of it"
           : left > 0 ? ` · ${fmtAmount(left, unit)} left in that pack` : " · that pack is finished";
         this._notes.set(id, { text: `Took ${took}${rest}` });
@@ -222,7 +252,10 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
           untracked: `${food} isn't tracked in Fridge Assistant`,
           not_in_stock: `There's no ${name.toLowerCase()} in Fridge Assistant`,
           no_amount_tracked: `There's no ${name.toLowerCase()} in Fridge Assistant`,
-          no_conversion: `Fridge Assistant can't tell how much one ${name.toLowerCase()} is`,
+          no_conversion: amount.unit === "each"
+            ? `Fridge Assistant can't tell how much one ${name.toLowerCase()} is; put the amount in the plan, e.g. "40 g ${food.toLowerCase()}"`
+            : `Fridge Assistant can't convert ${amount.unit} of ${name.toLowerCase()}`,
+          no_quantity: "No amount to take",
         }[line.status] || `Nothing taken (${line.status || "unknown"})`;
         this._notes.set(id, { text: why, bad: true });
       }

@@ -255,8 +255,10 @@ passes the recipe's ingredients to `fridge_assistant.consume_ingredients` —
 and **Print label**, where you pick how many portions (containers) and
 Freezer or Fridge; the cooked meal is added as a dish with that many portions
 and a sticker is printed for each. Loose ingredients on the plan (notes such
-as "Avocado") get an **Eaten** button, which takes one of it out of stock with
-`consume_ingredients` (one "each", converted through the template's `per`).
+as "Avocado") get an **Eaten** button, which takes it out of stock with
+`consume_ingredients`: the amount at the start of the note ("40 g cannellini
+beans", "½ avocado", "1 tin chickpeas"), or one "each" (converted through the
+template's `per`) when the note has none.
 A meal counts as made once `todo_entity` holds a line whose JSON description
 has its `mealplan_id` and a `done` record; it then shows a tick.
 

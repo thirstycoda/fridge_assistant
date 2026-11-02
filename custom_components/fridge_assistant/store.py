@@ -14,6 +14,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .amounts import (
+    EMPTY_SHARE,
+    NEGLIGIBLE_UNITS,
+    convert,
+    initial_amount,
+    normalize_unit,
+)
 from .codes import generate_code
 from .const import (
     ACTION_EATEN,
@@ -27,10 +34,10 @@ from .const import (
     DEFAULT_EMOJI,
     DEFAULT_ICON,
     DEFAULT_KIND,
+    DEFAULT_LOCATION,
     HISTORY_ACTIONS,
     KIND_DISH,
     KIND_INGREDIENT,
-    DEFAULT_LOCATION,
     LOCATION_AUTO,
     LOCATION_CUPBOARD,
     LOCATION_FREEZER,
@@ -44,18 +51,21 @@ from .const import (
     SOURCE_NONE,
     SOURCE_TEMPLATE,
     STORAGE_KEY,
-    shelf_life_key,
     STORAGE_VERSION,
     UNKNOWN_ITEM_NAME,
     canonical_category,
     canonical_kind,
     canonical_location,
     resolve_language,
+    shelf_life_key,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 SEED_PATH = Path(__file__).parent / "data" / "seed_templates.json"
+
+# Where recipe ingredients are taken from first (after opened packs).
+_DRAW_ORDER = {LOCATION_FRIDGE: 0, LOCATION_CUPBOARD: 1, LOCATION_PANTRY: 2, LOCATION_FREEZER: 3}
 
 
 def _normalize(text: str) -> str:
@@ -421,6 +431,11 @@ class FridgeStore:
             or existing.get("kind")
             or CATEGORY_KIND.get(tpl["category"], DEFAULT_KIND)
         )
+        # Inventory amounts: the unit stock is counted in, a pack's size in it,
+        # and how recipe units convert ({"tbsp": 18, "can": 400}).
+        for key in ("amount_unit", "pack_amount", "per"):
+            if key in data or key in existing:
+                tpl[key] = data.get(key, existing.get(key))
         if "opened_fridge" in data or "opened_fridge" in existing:
             tpl["opened_fridge"] = data.get(
                 "opened_fridge", existing.get("opened_fridge")
@@ -579,6 +594,16 @@ class FridgeStore:
                 else CATEGORY_KIND.get(item.get("category"), DEFAULT_KIND)
             )
         item["kind"] = kind
+        # How much is in it, when the template knows its pack size/unit: a
+        # count ("2") is that many packs, a measure ("1.5 kg") converts.
+        if template and template.get("amount_unit"):
+            amount = data.get("amount")
+            if amount is None:
+                amount = initial_amount(template, data.get("quantity"))
+            if amount is not None:
+                item["amount"] = round(float(amount), 2)
+                item["amount_initial"] = item["amount"]
+                item["amount_unit"] = normalize_unit(template["amount_unit"])
         return item
 
     def add_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -605,6 +630,8 @@ class FridgeStore:
             "expiry_source",
             "notes",
             "barcode",
+            "amount",
+            "amount_unit",
         }
         for key, value in changes.items():
             if key not in allowed:
@@ -622,6 +649,14 @@ class FridgeStore:
                     continue
             if key == "category":
                 value = canonical_category(value)
+            if key == "amount":
+                try:
+                    value = None if value in (None, "") else round(float(value), 2)
+                except (TypeError, ValueError):
+                    continue
+                # A manual top-up past the original resets the "full" mark.
+                if value is not None and value > (item.get("amount_initial") or 0):
+                    item["amount_initial"] = value
             item[key] = value
         item["updated_at"] = dt_util.now().isoformat()
         return item
@@ -841,6 +876,125 @@ class FridgeStore:
                 p.pop("by_name", None)
                 p.pop("event_id", None)
                 return
+
+    # ---- recipe ingredients ---------------------------------------------------
+
+
+    def _ensure_amount(self, item: dict[str, Any], template: dict[str, Any]) -> float | None:
+        """The item's amount, starting untracked items as full packs."""
+        if item.get("amount") is not None:
+            return float(item["amount"])
+        start = initial_amount(template, item.get("quantity"))
+        if start is None:
+            return None
+        item["amount"] = item["amount_initial"] = round(start, 2)
+        item["amount_unit"] = normalize_unit(template["amount_unit"])
+        return start
+
+    def consume_ingredients(
+        self,
+        lines: list[dict[str, Any]],
+        factor: float = 1.0,
+        dry_run: bool = False,
+        by: str | None = None,
+        by_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Take recipe ingredients out of stock.
+
+        Each line is ``{"food", "quantity", "unit"}`` (``name`` works for
+        ``food``). Lines are matched to a template, converted to its unit and
+        taken from its items: opened packs first, then fridge, cupboard,
+        pantry, freezer, soonest expiry first. Items that run out are
+        completed as eaten. ``dry_run`` reports without changing anything.
+        """
+        results: list[dict[str, Any]] = []
+        events: list[dict[str, Any]] = []
+        left: dict[str, float] = {}  # working amounts, so a dry run never writes
+        for line in lines:
+            food = str(line.get("food") or line.get("name") or "").strip()
+            qty = line.get("quantity")
+            unit = line.get("unit") or ""
+            res: dict[str, Any] = {"food": food, "quantity": qty, "unit": unit, "taken": []}
+            results.append(res)
+            template = self.match_template(food) if food else None
+            if template is None:
+                res["status"] = "untracked"
+                continue
+            res["template"] = template["name"]
+            items = [i for i in self.items.values() if i.get("template_id") == template["id"]]
+            if not items:
+                res["status"] = "not_in_stock"
+                continue
+            try:
+                qty = float(qty or 0) * float(factor)
+            except (TypeError, ValueError):
+                qty = 0.0
+            if qty <= 0:
+                res["status"] = "no_quantity"
+                continue
+            if normalize_unit(unit) in NEGLIGIBLE_UNITS:
+                res["status"] = "negligible"
+                continue
+            need = convert(qty, unit, template)
+            if need is None:
+                res["status"] = "no_conversion"
+                continue
+            res["need"] = round(need, 2)
+            res["amount_unit"] = normalize_unit(template["amount_unit"])
+
+            def order(item: dict[str, Any]) -> tuple:
+                opened = (item.get("amount") is not None
+                          and item.get("amount", 0) < (item.get("amount_initial") or 0))
+                return (0 if opened else 1, _DRAW_ORDER.get(item.get("location"), 9),
+                        item.get("expiry_date") or "9999-12-31")
+
+            remaining = need
+            for item in sorted(items, key=order):
+                if remaining <= 0:
+                    break
+                if item["id"] not in left:
+                    have = (self._ensure_amount(dict(item), template) if dry_run
+                            else self._ensure_amount(item, template))
+                    if have is None:
+                        continue
+                    left[item["id"]] = have
+                have = left[item["id"]]
+                if have <= 0:
+                    continue
+                take = min(have, remaining)
+                left[item["id"]] = have - take
+                remaining -= take
+                start = item.get("amount_initial") or initial_amount(template, item.get("quantity")) or have
+                used_up = left[item["id"]] <= max(EMPTY_SHARE * float(start), 1e-6)
+                res["taken"].append({
+                    "id": item["id"], "code": item.get("code"), "name": item.get("name"),
+                    "location": item.get("location"), "taken": round(take, 2),
+                    "left": 0 if used_up else round(left[item["id"]], 2), "used_up": used_up,
+                })
+            if not res["taken"]:
+                res["status"] = "no_amount_tracked"
+                continue
+            res["short"] = round(max(remaining, 0.0), 2)
+            res["status"] = "short" if remaining > 1e-6 else "taken"
+
+        if not dry_run:
+            now = dt_util.now().isoformat()
+            for res in results:
+                for t in res["taken"]:
+                    item = self.items.get(t["id"])
+                    if item is None:
+                        continue
+                    if t["used_up"]:
+                        event = self.complete_item(item["id"], ACTION_EATEN, by=by, by_name=by_name)
+                        if event:
+                            events.append(event)
+                    else:
+                        item["amount"] = t["left"]
+                        item["updated_at"] = now
+        counts: dict[str, int] = {}
+        for res in results:
+            counts[res["status"]] = counts.get(res["status"], 0) + 1
+        return {"dry_run": dry_run, "factor": factor, "lines": results, "counts": counts, "completed": events}
 
     def restore_item(self, event_id: str) -> dict[str, Any] | None:
         """Undo a completion or portion event, dropping it from history."""

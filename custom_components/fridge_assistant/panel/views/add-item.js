@@ -58,6 +58,7 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
         <label class="field"><span>${panel.t("quantityLabel")}</span><input id="f-qty" placeholder="${panel.t("quantityPlaceholder")}" value="${esc(editItem?.quantity ?? prefill.quantity ?? "")}"></label>
         <label class="field"><span>${panel.t("emojiLabel")}</span><input id="f-emojiin" maxlength="4" value="${esc(m.emoji)}"></label>
       </div>
+      ${editItem && editItem.amount_unit ? `<label class="field"><span>${panel.t("amountLeftField", editItem.amount_unit)}</span><input id="f-amount" type="number" min="0" step="any" inputmode="decimal" value="${esc(editItem.amount ?? "")}"></label>` : ""}
       <label class="field"><span>${panel.t("notesLabel")}</span><input id="f-notes" placeholder="${panel.t("notesLabel")}" value="${esc(editItem?.notes ?? prefill.notes ?? "")}"></label>
       <label class="field"><span>${panel.t("photoUrlLabel")}</span><input id="f-photo" placeholder="${panel.t("photoUrlPlaceholder")}" value="${esc(editItem?.photo ?? prefill.photo ?? "")}"></label>
     </div>
@@ -234,6 +235,8 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
       barcode: (editItem?.barcode ?? prefill.barcode) || null,
     };
     if (!isEdit) payload.portions = m.portions;
+    const amountEl = q("#f-amount");
+    if (isEdit && amountEl && amountEl.value !== "") payload.amount = Number(amountEl.value);
     if (!payload.contents) { nameEl.focus(); return; }
     q("#f-submit").disabled = true;
     try {

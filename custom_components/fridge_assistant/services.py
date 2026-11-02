@@ -85,6 +85,7 @@ SERVICE_ADD_TEMPLATE = "add_template"
 SERVICE_PRINT_STICKER = "print_sticker"
 SERVICE_EXPORT_LABEL = "export_label"
 SERVICE_RUN_CHECK = "run_check"
+SERVICE_CONSUME_INGREDIENTS = "consume_ingredients"
 
 _ALL_SERVICES = [
     SERVICE_ADD_ITEM,
@@ -98,6 +99,7 @@ _ALL_SERVICES = [
     SERVICE_PRINT_STICKER,
     SERVICE_EXPORT_LABEL,
     SERVICE_RUN_CHECK,
+    SERVICE_CONSUME_INGREDIENTS,
 ]
 
 _SAMPLE_ITEM = {
@@ -145,6 +147,9 @@ ADD_ITEM_SCHEMA = vol.Schema(
         vol.Optional("icon"): cv.string,
         vol.Optional("photo"): cv.string,
         vol.Optional("notes"): cv.string,
+        vol.Optional("barcode"): cv.string,
+        # How much is in it, in the template's unit; defaults to the pack size.
+        vol.Optional("amount"): vol.Coerce(float),
     }
 )
 
@@ -158,6 +163,24 @@ COMPLETE_ITEM_SCHEMA = vol.Schema(
     {
         vol.Required("id"): cv.string,
         vol.Required("action"): vol.In(HISTORY_ACTIONS),
+    }
+)
+
+CONSUME_INGREDIENTS_SCHEMA = vol.Schema(
+    {
+        vol.Required("ingredients"): [
+            vol.Schema(
+                {
+                    vol.Optional("food"): vol.Any(None, cv.string),
+                    vol.Optional("name"): vol.Any(None, cv.string),
+                    vol.Optional("quantity"): vol.Any(None, vol.Coerce(float)),
+                    vol.Optional("unit"): vol.Any(None, cv.string),
+                },
+                extra=vol.ALLOW_EXTRA,
+            )
+        ],
+        vol.Optional("factor", default=1.0): vol.All(vol.Coerce(float), vol.Range(min=0)),
+        vol.Optional("dry_run", default=False): cv.boolean,
     }
 )
 
@@ -230,6 +253,17 @@ def async_setup_services(hass: HomeAssistant) -> None:
         if event is None:
             raise HomeAssistantError(shared_text(hass, "item_not_found", id=call.data["id"]))
         return {"event": event}
+
+    async def handle_consume_ingredients(call: ServiceCall) -> ServiceResponse:
+        runtime = _get_runtime(hass)
+        by, by_name = await runtime.async_user_attrs(call.context.user_id)
+        return await runtime.async_consume_ingredients(
+            [dict(line) for line in call.data["ingredients"]],
+            factor=call.data["factor"],
+            dry_run=call.data["dry_run"],
+            by=by,
+            by_name=by_name,
+        )
 
     async def handle_eat_portion(call: ServiceCall) -> ServiceResponse:
         runtime = _get_runtime(hass)
@@ -397,6 +431,10 @@ def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_COMPLETE_ITEM, handle_complete_item,
         schema=COMPLETE_ITEM_SCHEMA, supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_CONSUME_INGREDIENTS, handle_consume_ingredients,
+        schema=CONSUME_INGREDIENTS_SCHEMA, supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_EAT_PORTION, handle_eat_portion,

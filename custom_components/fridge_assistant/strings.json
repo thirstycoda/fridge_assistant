@@ -200,6 +200,24 @@
     "run_check": {
       "name": "Run expiry check",
       "description": "Run the check for soon-to-expire items now (event + notification)."
+    },
+    "consume_ingredients": {
+      "name": "Use recipe ingredients",
+      "description": "Take a recipe's ingredients out of stock. Each line is matched to a template, converted to its unit and taken from its items (opened packs first, then soonest expiry). Items that run out are marked eaten.",
+      "fields": {
+        "ingredients": {
+          "name": "Ingredients",
+          "description": "List of lines: food, quantity and unit, e.g. as a Mealie recipe gives them."
+        },
+        "factor": {
+          "name": "Factor",
+          "description": "Scale the amounts, e.g. 0.5 when you made half."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "Report what would be taken without changing anything."
+        }
+      }
     }
   }
 }

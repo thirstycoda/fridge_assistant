@@ -243,6 +243,37 @@ A line's description may hold JSON — `{"name": "<product title>", "qty": 2,
 "location": "auto", "ordered": "<original, for a substitute>"}`; otherwise
 the summary (`2 × Product`) is used. Live scanning needs HTTPS.
 
+## Amounts and recipe ingredients
+
+An ingredient template can say how its stock is counted, so items know how
+much is left: `amount_unit` (`g`, `ml`, `each`, or a count word like
+`clove`), `pack_amount` (one pack, in that unit) and `per`, how recipe units
+convert (`{"tbsp": 18, "can": 400}`). New items then start with their pack
+size (a quantity of `2` means two packs; a scanned `1.5 kg` converts
+directly), the item details show what's left, and it can be corrected in the
+edit form.
+
+`fridge_assistant.consume_ingredients` takes a recipe's lines out of stock:
+
+```yaml
+action: fridge_assistant.consume_ingredients
+data:
+  ingredients:
+    - {food: plain flour, quantity: 300, unit: gram}
+    - {food: white miso, quantity: 1.5, unit: tablespoon}
+  factor: 1        # 0.5 when you made half
+  dry_run: false   # true to see what would be taken
+response_variable: used
+```
+
+Each line is matched to a template, converted, and taken from its items:
+opened packs first, then fridge, cupboard, pantry, freezer, soonest expiry
+first. Items that run out are completed as eaten. The response lists every
+line with a status (`taken`, `short`, `untracked`, `not_in_stock`,
+`no_quantity`, `negligible`, `no_conversion`, `no_amount_tracked`) and what
+was taken from which item. Metric units convert on their own; a kitchen
+measure needs a `per` entry, so nothing is guessed.
+
 ## Language
 
 Fridge Assistant follows a simple rule everywhere — panel, printed labels, AI prompts, and the daily

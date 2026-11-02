@@ -201,6 +201,24 @@
     "run_check": {
       "name": "Houdbaarheidscontrole uitvoeren",
       "description": "Voer nu de controle op bijna-over-datum items uit (event + melding)."
+    },
+    "consume_ingredients": {
+      "name": "Receptingrediënten gebruiken",
+      "description": "Haal de ingrediënten van een recept uit de voorraad. Elke regel wordt aan een sjabloon gekoppeld, omgerekend en van de items afgehaald (geopende verpakkingen eerst, dan wat het eerst verloopt).",
+      "fields": {
+        "ingredients": {
+          "name": "Ingrediënten",
+          "description": "Lijst van regels: food, quantity en unit."
+        },
+        "factor": {
+          "name": "Factor",
+          "description": "Schaal de hoeveelheden, bijv. 0,5 voor een half recept."
+        },
+        "dry_run": {
+          "name": "Proefrun",
+          "description": "Laat zien wat er afgehaald zou worden zonder iets te wijzigen."
+        }
+      }
     }
   }
 }

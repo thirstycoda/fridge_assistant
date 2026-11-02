@@ -3,7 +3,7 @@
  * batch with per-portion eat/toss/print/undo, plus the item details. */
 
 import { STATUS_COLOR } from "../strings.js";
-import { daysLabel, esc, fmtDate } from "../lib/format.js";
+import { daysLabel, esc, fmtAmount, fmtDate } from "../lib/format.js";
 import { openSurface } from "../lib/surface.js";
 import { relTime } from "./history.js";
 
@@ -94,6 +94,7 @@ export function openInspector(panel, item, { highlight = null } = {}) {
         <div class="d-row"><span>${panel.t("dateInDetailLabel")}</span><b>${fmtDate(i.added_date, lang)}${i.age_days != null ? ` · ${esc(panel.t("daysAgoShort", i.age_days))}` : ""}</b></div>
         <div class="d-row"><span>${panel.t("expiryLabel")}</span><b>${i.expiry_date ? fmtDate(i.expiry_date, lang) : "—"}</b></div>
         ${i.quantity ? `<div class="d-row"><span>${panel.t("quantityLabel")}</span><b>${esc(i.quantity)}</b></div>` : ""}
+        ${i.amount != null ? `<div class="d-row"><span>${panel.t("amountLeftLabel")}</span><b>${esc(i.amount_initial && i.amount_initial !== i.amount ? panel.t("amountOfFmt", fmtAmount(i.amount, i.amount_unit), fmtAmount(i.amount_initial, i.amount_unit)) : fmtAmount(i.amount, i.amount_unit))}</b></div>` : ""}
         ${i.notes ? `<div class="d-row"><span>${panel.t("notesLabel")}</span><b>${esc(i.notes)}</b></div>` : ""}
       </div>
       <div class="modal-actions">

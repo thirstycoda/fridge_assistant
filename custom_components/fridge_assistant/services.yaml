@@ -117,3 +117,23 @@ print_sticker:
         text:
 
 run_check:
+
+consume_ingredients:
+  fields:
+    ingredients:
+      required: true
+      example: '[{"food": "plain flour", "quantity": 300, "unit": "g"}]'
+      selector:
+        object:
+    factor:
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.25
+          mode: box
+    dry_run:
+      default: false
+      selector:
+        boolean:

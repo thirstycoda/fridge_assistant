@@ -42,6 +42,18 @@ export function daysLabel(daysLeft, lang) {
   if (daysLeft === 1) return lang === "nl" ? "nog 1 dag" : "1 day left";
   return lang === "nl" ? `nog ${daysLeft} dagen` : `${daysLeft} days left`;
 }
+/* "320 g", "1.25 kg", "3 cloves" — an item's amount in its unit. */
+export function fmtAmount(amount, unit) {
+  if (amount == null || amount === "") return "";
+  const n = Number(amount);
+  if (unit === "g" && n >= 1000) return `${+(n / 1000).toFixed(2)} kg`;
+  if (unit === "ml" && n >= 1000) return `${+(n / 1000).toFixed(2)} l`;
+  const v = n >= 10 || Number.isInteger(n) ? Math.round(n) : +n.toFixed(1);
+  if (!unit || unit === "each") return `${v}`;
+  if (unit === "g" || unit === "ml") return `${v} ${unit}`;
+  return `${v} ${unit}${n === 1 ? "" : "s"}`;
+}
+
 export function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }

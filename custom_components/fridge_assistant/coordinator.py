@@ -188,6 +188,24 @@ class FridgeRuntime:
         self._fire_completed(event)
         return event
 
+    async def async_consume_ingredients(
+        self,
+        lines: list[dict[str, Any]],
+        factor: float = 1.0,
+        dry_run: bool = False,
+        by: str | None = None,
+        by_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Take recipe ingredients out of stock (see store.consume_ingredients)."""
+        result = self.store.consume_ingredients(
+            lines, factor=factor, dry_run=dry_run, by=by, by_name=by_name
+        )
+        if not dry_run:
+            await self.async_changed()
+            for event in result["completed"]:
+                self._fire_completed(event)
+        return result
+
     async def async_consume_portion(
         self,
         item_id: str,

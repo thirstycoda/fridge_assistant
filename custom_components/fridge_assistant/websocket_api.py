@@ -80,6 +80,8 @@ _ITEM_FIELDS = {
     vol.Optional("expiry_source"): _OPT_STR,
     vol.Optional("notes"): _OPT_STR,
     vol.Optional("barcode"): _OPT_STR,
+    vol.Optional("amount"): vol.Any(None, vol.Coerce(float)),
+    vol.Optional("amount_unit"): _OPT_STR,
 }
 ITEM_SCHEMA = vol.Schema(_ITEM_FIELDS, extra=vol.REMOVE_EXTRA)
 CHANGES_SCHEMA = vol.Schema(
@@ -100,6 +102,9 @@ TEMPLATE_SCHEMA = vol.Schema(
         ),
         vol.Optional("notes"): _OPT_STR,
         vol.Optional("opened_fridge"): vol.Any(None, vol.Coerce(int)),
+        vol.Optional("amount_unit"): _OPT_STR,
+        vol.Optional("pack_amount"): vol.Any(None, vol.Coerce(float)),
+        vol.Optional("per"): vol.Any(None, vol.Schema({cv.string: vol.Coerce(float)})),
         vol.Optional("source"): cv.string,
     },
     extra=vol.REMOVE_EXTRA,

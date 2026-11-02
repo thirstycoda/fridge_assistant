@@ -140,6 +140,25 @@ class TestConsume(unittest.TestCase):
         self.store.consume_ingredients([{"food": "plain flour", "quantity": 100, "unit": "g"}])
         self.assertEqual(self.store.items[item["id"]]["amount"], 1400)
 
+    def test_recipe_matching_is_strict(self):
+        self.store.upsert_user_template({"name": "Coriander", "aliases": ["fresh coriander"], "category": "vegetables"})
+        self.store.upsert_user_template({"name": "Ultimate Chilli", "category": "dinner", "kind": "dish"})
+        self.store.upsert_user_template({"name": "Chickpeas", "aliases": ["chick peas"], "category": "other"})
+        self.store.upsert_user_template({"name": "Chickpea flour", "category": "other"})
+        m = self.store.match_ingredient
+        self.assertEqual(m("coriander")["name"], "Coriander")
+        self.assertEqual(m("Fresh Coriander")["name"], "Coriander")
+        self.assertIsNone(m("coriander seeds"))          # no containment
+        self.assertIsNone(m("red chilli"))               # meals never match
+        self.assertIsNone(m("ultimate chilli"))
+        self.assertEqual(m("chickpea")["name"], "Chickpeas")   # plural folded
+        self.assertEqual(m("chickpea flour")["name"], "Chickpea flour")
+
+    def test_line_can_name_its_template(self):
+        item = self.add("Plain flour", amount=500)
+        self.store.consume_ingredients([{"food": "something odd", "template_id": self.flour["id"], "quantity": 100, "unit": "g"}])
+        self.assertEqual(self.store.items[item["id"]]["amount"], 400)
+
     def test_template_keeps_amount_fields(self):
         tpl = self.store.upsert_user_template({"id": self.flour["id"], "name": "Plain flour", "notes": "x"})
         self.assertEqual(tpl["pack_amount"], 1500)

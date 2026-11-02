@@ -405,6 +405,25 @@ class FridgeStore:
             return best[1]
         return None
 
+    def match_ingredient(self, food: str) -> dict[str, Any] | None:
+        """Strict match for a recipe ingredient: an ingredient template whose
+        name or an alias is the same words, plurals folded.
+
+        Recipe foods are already clean names, so unlike product titles there
+        is no containment: "coriander seeds" must not become fresh coriander,
+        nor "water" coconut water. Meals never match.
+        """
+        want = _stems(_tokens(food))
+        if not want:
+            return None
+        for tpl in self.all_templates():
+            if template_kind(tpl) != KIND_INGREDIENT:
+                continue
+            for name in [tpl.get("name", ""), *tpl.get("aliases", [])]:
+                if name and _stems(_tokens(name)) == want:
+                    return tpl
+        return None
+
     def upsert_user_template(self, data: dict[str, Any]) -> dict[str, Any]:
         # An explicit id means "edit this one" (override a builtin / update an
         # own template). Without an id it's a brand-new template, so we pick an
@@ -916,7 +935,9 @@ class FridgeStore:
             unit = line.get("unit") or ""
             res: dict[str, Any] = {"food": food, "quantity": qty, "unit": unit, "taken": []}
             results.append(res)
-            template = self.match_template(food) if food else None
+            template = self.get_template(line.get("template_id")) if line.get("template_id") else None
+            if template is None and food:
+                template = self.match_ingredient(food)
             if template is None:
                 res["status"] = "untracked"
                 continue

@@ -26,6 +26,7 @@ from .const import (
     CONF_PRINTER_ENABLED,
     DOMAIN,
     HISTORY_ACTIONS,
+    DEFAULT_LOCATION,
     LEGACY_LOCATIONS,
     LOCATION_AUTO,
     LOCATIONS,
@@ -128,7 +129,7 @@ ADD_ITEM_SCHEMA = vol.Schema(
         vol.Optional("contents"): cv.string,
         # Legacy Dutch values stay accepted so old automations keep working;
         # store.build_item canonicalises them to the English ones.
-        vol.Optional("location", default=LOCATIONS[0]): vol.In(
+        vol.Optional("location", default=DEFAULT_LOCATION): vol.In(
             [*LOCATIONS, *LEGACY_LOCATIONS, LOCATION_AUTO]
         ),
         vol.Optional("category"): cv.string,

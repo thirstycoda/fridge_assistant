@@ -45,7 +45,9 @@ class TestLabels(unittest.TestCase):
     def test_location_label_both_languages(self):
         self.assertEqual(const.location_label("fridge", "nl"), "Koelkast")
         self.assertEqual(const.location_label("fridge", "en"), "Fridge")
-        self.assertEqual(const.location_label("pantry", "nl"), "Buiten koelkast")
+        self.assertEqual(const.location_label("pantry", "nl"), "Voorraadkast")
+        self.assertEqual(const.location_label("cupboard", "en"), "Cupboard")
+        self.assertEqual(const.location_label("cupboard", "nl"), "Kast")
         # Unknown key falls back to the key itself instead of crashing.
         self.assertEqual(const.location_label("attic", "en"), "attic")
 

@@ -31,18 +31,34 @@ SIGNAL_UPDATED: Final = "fridge_assistant_updated"
 LOCATION_FRIDGE: Final = "fridge"
 LOCATION_FREEZER: Final = "freezer"
 LOCATION_PANTRY: Final = "pantry"
-LOCATIONS: Final = [LOCATION_FRIDGE, LOCATION_FREEZER, LOCATION_PANTRY]
+LOCATION_CUPBOARD: Final = "cupboard"
+LOCATIONS: Final = [LOCATION_CUPBOARD, LOCATION_FRIDGE, LOCATION_FREEZER, LOCATION_PANTRY]
+# Where new items go when no location is given (kept independent of list order).
+DEFAULT_LOCATION: Final = LOCATION_FRIDGE
+# Templates store one shelf life per *storage condition*, not per place: the
+# "pantry" figure means room temperature and is shared by the cupboard (the
+# everyday spot) and the pantry (overflow / emergency stock).
+SHELF_LIFE_KEYS: Final = [LOCATION_FRIDGE, LOCATION_FREEZER, LOCATION_PANTRY]
+_SHELF_LIFE_KEY_FOR: Final = {LOCATION_CUPBOARD: LOCATION_PANTRY}
+
+
+def shelf_life_key(location: str) -> str:
+    """The template shelf_life key that applies to a location."""
+    return _SHELF_LIFE_KEY_FOR.get(location, location)
+
 # Service-only value for add_item: put the item where its template says it keeps best.
 LOCATION_AUTO: Final = "auto"
 
 LOCATION_META: Final = {
+    LOCATION_CUPBOARD: {"label": "Kast", "emoji": "🗄️", "icon": "mdi:cupboard-outline"},
     LOCATION_FRIDGE: {"label": "Koelkast", "emoji": "🧊", "icon": "mdi:fridge"},
     LOCATION_FREEZER: {"label": "Vriezer", "emoji": "❄️", "icon": "mdi:snowflake"},
-    LOCATION_PANTRY: {"label": "Buiten koelkast", "emoji": "🧺", "icon": "mdi:basket-outline"},
+    LOCATION_PANTRY: {"label": "Voorraadkast", "emoji": "🧺", "icon": "mdi:basket-outline"},
 }
 # English labels for server-rendered text (printed labels, notifications).
 # The panel translates location_meta itself; this covers backend-only output.
 LOCATION_LABELS_EN: Final = {
+    LOCATION_CUPBOARD: "Cupboard",
     LOCATION_FRIDGE: "Fridge",
     LOCATION_FREEZER: "Freezer",
     LOCATION_PANTRY: "Pantry",

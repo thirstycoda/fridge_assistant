@@ -103,8 +103,11 @@ full undo. It works completely offline; AI estimates and the printer add-on are 
 
 ### Inventory model
 
-Every item lives in one of three **locations** — `fridge`, `freezer`, or `pantry`
-(room-temperature storage) — and belongs to one of two **kinds**:
+Every item lives in one of four **locations** — `cupboard`, `fridge`, `freezer`, or `pantry` — and
+belongs to one of two **kinds**. The cupboard is the everyday room-temperature spot and the pantry is
+overflow or emergency stock; both use a template's room-temperature shelf life, so templates keep
+three figures (fridge, freezer, room temperature). `location: auto` picks the cupboard, never the
+pantry. The two kinds:
 
 - 🥕 **ingredient** — a single product (milk, lettuce, cheese, ...)
 - 🍲 **dish** — something prepared (leftovers, a home-cooked meal, ...)

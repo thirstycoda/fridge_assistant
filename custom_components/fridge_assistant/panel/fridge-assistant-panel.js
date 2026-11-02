@@ -10,7 +10,7 @@
  * `t()` below. Only nl/en exist; there is no third language.
  */
 
-import { CATEGORY_LABELS, KIND_LABELS, LOCATION_LABELS, STATUS_COLOR, STRINGS } from "./strings.js";
+import { CATEGORY_LABELS, KIND_LABELS, LOCATION_LABELS, SHELF_LIFE_LABELS, STATUS_COLOR, STRINGS } from "./strings.js";
 import { STYLES } from "./styles.js";
 import { daysLabel, esc, fmtDate } from "./lib/format.js";
 import { openModal, toast, wireDateField } from "./lib/surface.js";
@@ -82,6 +82,19 @@ class FridgeAssistantPanel extends HTMLElement {
     const base = (this._state && this._state.location_meta || {})[key] || {};
     const table = LOCATION_LABELS[this._lang()] || LOCATION_LABELS.en;
     return { ...base, label: table[key] || base.label || key };
+  }
+  // Shelf-life key for a location (the cupboard uses the room-temperature figure).
+  _slKey(loc) {
+    return loc === "cupboard" ? "pantry" : loc;
+  }
+  // Label/emoji for a shelf-life key in the template editor and AI estimate.
+  _shelfMeta(key) {
+    const base = key === "pantry" ? this._locMeta("cupboard") : this._locMeta(key);
+    const table = SHELF_LIFE_LABELS[this._lang()] || SHELF_LIFE_LABELS.en;
+    return { ...base, label: table[key] || base.label };
+  }
+  _shelfKeys() {
+    return (this._state && this._state.shelf_life_keys) || ["fridge", "freezer", "pantry"];
   }
   _catMeta(key) {
     const base = (this._state && this._state.categories || {})[key] || {};

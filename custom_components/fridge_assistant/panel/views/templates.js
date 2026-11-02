@@ -37,7 +37,7 @@ export function openTemplatePicker(panel, onPick) {
       return `<button class="tp-item" data-id="${t.id}">
         <span class="tp-emoji">${t.emoji || c.emoji || "🍽️"}</span>
         <span class="tp-name"><b>${esc(t.name)}</b><small>${panel._kindMeta(panel._kindOf(t)).emoji || ""} ${esc(c.label || t.category)}${t.source === "user" || t.source === "ai" ? panel.t("ownSuffix") : ""}</small></span>
-        <span class="tp-sl">${["fridge", "freezer", "pantry"].map((l) => sl[l] ? `<i>${panel._locMeta(l).emoji || ""}${sl[l]}d</i>` : "").join("")}</span>
+        <span class="tp-sl">${panel._shelfKeys().map((l) => sl[l] ? `<i>${panel._shelfMeta(l).emoji || ""}${sl[l]}d</i>` : "").join("")}</span>
       </button>`;
     }).join("") || `<div class="empty small"><p>${panel.t("nothingFound")}</p></div>`;
     listEl.querySelectorAll(".tp-item").forEach((b) =>
@@ -114,7 +114,7 @@ export function openTemplatesManager(panel) {
       return `<button class="tp-item" data-id="${t.id}">
         <span class="tp-emoji">${t.emoji || c.emoji || "🍽️"}</span>
         <span class="tp-name"><b>${esc(t.name)}${badge}</b><small>${panel._kindMeta(panel._kindOf(t)).emoji || ""} ${esc(c.label || t.category)}</small></span>
-        <span class="tp-sl">${["fridge", "freezer", "pantry"].map((l) => sl[l] ? `<i>${panel._locMeta(l).emoji || ""}${sl[l]}d</i>` : "").join("")}</span>
+        <span class="tp-sl">${panel._shelfKeys().map((l) => sl[l] ? `<i>${panel._shelfMeta(l).emoji || ""}${sl[l]}d</i>` : "").join("")}</span>
       </button>`;
     }).join("") || `<div class="empty small"><p>${panel.t("nothingInGroup")}</p></div>`;
     listEl.querySelectorAll(".tp-item").forEach((b) =>
@@ -182,7 +182,7 @@ export function aiNewTemplate(panel, onChanged) {
 
 export function openTemplateEditor(panel, tpl, isNew, onChanged) {
   const cats = panel._state.categories;
-  const locs = panel._state.locations;
+  const locs = panel._shelfKeys();
   const t = tpl || { name: "", emoji: "", category: "other", shelf_life: {}, aliases: [], notes: "" };
   const catOf = (k) => panel._catMeta(k) || panel._catMeta("other");
   const kinds = panel._state.kinds || {};
@@ -193,7 +193,7 @@ export function openTemplateEditor(panel, tpl, isNew, onChanged) {
     return `<option value="${k}" ${k === (t.category || "other") ? "selected" : ""}>${cm.emoji} ${cm.label}</option>`;
   }).join("");
   const dayField = (loc) => {
-    const lm = panel._locMeta(loc);
+    const lm = panel._shelfMeta(loc);
     return `<label class="field"><span>${lm.emoji} ${lm.label}</span><input type="number" inputmode="numeric" min="0" max="3650" class="te-day" data-loc="${loc}" value="${sl[loc] ?? ""}" placeholder="${panel.t("notApplicablePlaceholder")}"></label>`;
   };
   const isBuiltin = !!t.builtin;

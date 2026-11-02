@@ -136,14 +136,15 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
       m.template_id = t.id; m.category = t.category; setEmoji(t.emoji || "🍽️");
       if (!m.kindManual) setKind(panel._kindOf(t));
       const sl = t.shelf_life || {};
-      const noHere = sl[m.location] === null || sl[m.location] === undefined;
+      const slDays = sl[panel._slKey(m.location)];
+      const noHere = slDays === null || slDays === undefined;
       applySuggestion(res.suggestion?.expiry_date, "template");
       suggestEl.className = "suggest ok";
       suggestEl.innerHTML = `
         <button type="button" class="s-take" id="s-take" title="${panel.t("useTemplateNameTitle")}">
           <span class="s-emoji">${t.emoji || "📋"}</span>
           <div class="s-body"><b>${esc(t.name)}</b>
-            <div class="s-sub">${noHere ? panel.t("notSuitableHere") : panel.t("daysAtLocation", panel._locMeta(m.location).label, sl[m.location])}${t.notes ? " · " + esc(t.notes) : ""}</div></div>
+            <div class="s-sub">${noHere ? panel.t("notSuitableHere") : panel.t("daysAtLocation", panel._locMeta(m.location).label, slDays)}${t.notes ? " · " + esc(t.notes) : ""}</div></div>
         </button>
         <div class="s-actions">
           ${panel._state.options.ai_enabled ? `<button class="s-mini" id="s-ai" title="${panel.t("aiEstimateTitle")}"><ha-icon icon="mdi:creation"></ha-icon></button>` : ""}
@@ -187,7 +188,7 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
       m.location = b.dataset.loc;
       q("#f-loc").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
       if (m.aiResult) {
-        const days = m.aiResult.shelf_life[m.location];
+        const days = m.aiResult.shelf_life[panel._slKey(m.location)];
         applySuggestion(days ? addDays(addedEl.value, days) : null, "ai");
       } else doMatch();
     })
@@ -309,7 +310,7 @@ export async function aiEstimate(panel, name, ctx) {
 
   // Recompute the expiry date + hint from the (possibly edited) AI days.
   const recompute = () => {
-    const days = m.aiResult.shelf_life[m.location];
+    const days = m.aiResult.shelf_life[panel._slKey(m.location)];
     if (!m.expiryManual) {
       expEl.value = days ? addDays(addedEl.value, days) : "";
       m.expiry = expEl.value;
@@ -325,8 +326,8 @@ export async function aiEstimate(panel, name, ctx) {
 
   const cell = (loc) => {
     const d = est.shelf_life[loc];
-    const lm = panel._locMeta(loc);
-    return `<div class="ai-loc ${loc === m.location ? "active" : ""}" data-loccell="${loc}">
+    const lm = panel._shelfMeta(loc);
+    return `<div class="ai-loc ${loc === panel._slKey(m.location) ? "active" : ""}" data-loccell="${loc}">
       <span class="ai-loc-emoji">${lm.emoji}</span>
       <span class="ai-days-wrap"><input class="ai-days" type="number" inputmode="numeric" min="0" max="3650" step="1" data-loc="${loc}" value="${d ?? ""}" placeholder="—"><i>${panel.t("dayUnitShort")}</i></span>
       <small>${lm.label}</small>
@@ -337,7 +338,7 @@ export async function aiEstimate(panel, name, ctx) {
   suggestEl.innerHTML = `
     <div class="ai-head"><span class="s-emoji">${est.emoji || "✨"}</span><b>${panel.t("aiEstimateTitle")}</b><span class="s-badge ai">AI · ${esc(res.estimate.provider || "")}</span></div>
     <div class="ai-sub">${panel.t("aiHint")}</div>
-    <div class="ai-locs">${panel._state.locations.map(cell).join("")}</div>
+    <div class="ai-locs">${panel._shelfKeys().map(cell).join("")}</div>
     ${est.notes ? `<div class="s-sub">💡 ${esc(est.notes)}</div>` : ""}
     <label class="checkline"><input type="checkbox" id="s-savetpl" checked> ${panel.t("saveAsTemplateLabel")}</label>
   `;

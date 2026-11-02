@@ -14,8 +14,14 @@ export const MONTHS = {
 // (locations/categories/kinds). The backend still sends emoji/icon; only the
 // label text is overridden here, per the active language.
 export const LOCATION_LABELS = {
-  nl: { fridge: "Koelkast", freezer: "Vriezer", pantry: "Buiten koelkast" },
-  en: { fridge: "Fridge", freezer: "Freezer", pantry: "Pantry" },
+  nl: { cupboard: "Kast", fridge: "Koelkast", freezer: "Vriezer", pantry: "Voorraadkast" },
+  en: { cupboard: "Cupboard", fridge: "Fridge", freezer: "Freezer", pantry: "Pantry" },
+};
+// Shelf-life figures are per storage condition; "pantry" means room temperature
+// and is shared by the cupboard and the pantry.
+export const SHELF_LIFE_LABELS = {
+  nl: { pantry: "Kast / voorraadkast" },
+  en: { pantry: "Cupboard / pantry" },
 };
 export const CATEGORY_LABELS = {
   nl: {

@@ -25,7 +25,7 @@ from .const import (
     KIND_DISH,
     KIND_INGREDIENT,
     LEGACY_LOCATIONS,
-    LOCATIONS,
+    SHELF_LIFE_KEYS,
     canonical_category,
     localized,
     resolve_language,
@@ -187,7 +187,7 @@ def _normalize(name: str, parsed: dict[str, Any]) -> dict[str, Any]:
         loc: _coerce_days(
             parsed.get(loc, parsed.get(_LEGACY_LOCATION_ALIASES.get(loc)))
         )
-        for loc in LOCATIONS
+        for loc in SHELF_LIFE_KEYS
     }
     category = canonical_category(parsed.get("category"))
     if category not in CATEGORIES:

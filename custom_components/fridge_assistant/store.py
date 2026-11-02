@@ -30,7 +30,9 @@ from .const import (
     HISTORY_ACTIONS,
     KIND_DISH,
     KIND_INGREDIENT,
+    DEFAULT_LOCATION,
     LOCATION_AUTO,
+    LOCATION_CUPBOARD,
     LOCATION_FREEZER,
     LOCATION_FRIDGE,
     LOCATION_PANTRY,
@@ -42,6 +44,7 @@ from .const import (
     SOURCE_NONE,
     SOURCE_TEMPLATE,
     STORAGE_KEY,
+    shelf_life_key,
     STORAGE_VERSION,
     UNKNOWN_ITEM_NAME,
     canonical_category,
@@ -450,7 +453,7 @@ class FridgeStore:
         if not template:
             return None
         sl = template.get("shelf_life") or {}
-        val = sl.get(location)
+        val = sl.get(shelf_life_key(location))
         return int(val) if isinstance(val, (int, float)) else None
 
     # ---- items ------------------------------------------------------------
@@ -475,18 +478,19 @@ class FridgeStore:
     @staticmethod
     def natural_location(template: dict[str, Any] | None) -> str:
         """Where a template's food keeps best: the cupboard when it lasts at least
-        as long there as in the fridge, else the fridge, else the freezer."""
+        as long at room temperature as in the fridge, else the fridge, else the
+        freezer. (The pantry is overflow stock, so it's never picked automatically.)"""
         life = (template or {}).get("shelf_life") or {}
         fridge, freezer, pantry = (
             life.get(LOCATION_FRIDGE), life.get(LOCATION_FREEZER), life.get(LOCATION_PANTRY)
         )
         if pantry and (fridge is None or pantry >= fridge):
-            return LOCATION_PANTRY
+            return LOCATION_CUPBOARD
         if fridge:
             return LOCATION_FRIDGE
         if freezer:
             return LOCATION_FREEZER
-        return LOCATIONS[0]
+        return DEFAULT_LOCATION
 
     def build_item(
         self, data: dict[str, Any], code_format: str = DEFAULT_CODE_FORMAT
@@ -506,7 +510,7 @@ class FridgeStore:
         if loc == LOCATION_AUTO:
             location = self.natural_location(template)
         else:
-            location = loc if loc in LOCATIONS else LOCATIONS[0]
+            location = loc if loc in LOCATIONS else DEFAULT_LOCATION
 
         added_date = data.get("added_date") or today.isoformat()
 

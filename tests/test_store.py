@@ -32,10 +32,10 @@ class TestBuildItem(unittest.TestCase):
         item = store.build_item({"name": "Soep", "kind": "gerecht"})
         self.assertEqual(item["kind"], "dish")
 
-    def test_invalid_location_falls_back_to_first(self):
+    def test_invalid_location_falls_back_to_default(self):
         store = make_store()
         item = store.build_item({"name": "X", "location": "garage"})
-        self.assertEqual(item["location"], const.LOCATIONS[0])
+        self.assertEqual(item["location"], const.DEFAULT_LOCATION)
 
     def test_unknown_name_localised(self):
         self.assertEqual(make_store("nl").build_item({})["name"], "Onbekend")
@@ -169,24 +169,57 @@ class TestAutoLocation(unittest.TestCase):
 
     def test_natural_location(self):
         nat = self.store.natural_location
-        self.assertEqual(nat({"shelf_life": {"fridge": 30, "pantry": 30}}), "pantry")
+        self.assertEqual(nat({"shelf_life": {"fridge": 30, "pantry": 30}}), "cupboard")
         self.assertEqual(nat({"shelf_life": {"fridge": 7, "pantry": 4}}), "fridge")
         self.assertEqual(nat({"shelf_life": {"fridge": 4, "pantry": None}}), "fridge")
         self.assertEqual(nat({"shelf_life": {"freezer": 365}}), "freezer")
-        self.assertEqual(nat(None), const.LOCATIONS[0])
+        self.assertEqual(nat(None), const.DEFAULT_LOCATION)
 
     def test_build_item_with_auto_location(self):
         tpl = self.store.upsert_user_template(
             {"name": "Sweet potatoes", "shelf_life": {"fridge": None, "freezer": 300, "pantry": 21}}
         )
         item = self.store.build_item({"name": "Ocado Organic Sweet Potatoes", "location": "auto"})
-        self.assertEqual(item["location"], "pantry")
+        self.assertEqual(item["location"], "cupboard")
         self.assertEqual(item["template_id"], tpl["id"])
         self.assertIsNotNone(item["expiry_date"])
 
     def test_auto_without_template_falls_back(self):
         item = self.store.build_item({"name": "Something unknown xyz", "location": "auto"})
-        self.assertEqual(item["location"], const.LOCATIONS[0])
+        self.assertEqual(item["location"], const.DEFAULT_LOCATION)
+
+
+class TestCupboard(unittest.TestCase):
+    """The cupboard is the everyday room-temperature spot; the pantry is overflow."""
+
+    def setUp(self):
+        self.store = make_store("en")
+        self.tpl = self.store.upsert_user_template(
+            {"name": "Chickpeas", "shelf_life": {"fridge": 3, "freezer": 180, "pantry": 365}}
+        )
+
+    def test_cupboard_uses_room_temperature_shelf_life(self):
+        self.assertEqual(self.store.shelf_life_days(self.tpl, "cupboard"), 365)
+        self.assertEqual(self.store.shelf_life_days(self.tpl, "pantry"), 365)
+        self.assertEqual(self.store.shelf_life_days(self.tpl, "fridge"), 3)
+
+    def test_items_in_cupboard_and_pantry_get_the_same_expiry(self):
+        a = self.store.build_item({"name": "Chickpeas", "location": "cupboard", "added_date": "2026-11-01"})
+        b = self.store.build_item({"name": "Chickpeas", "location": "pantry", "added_date": "2026-11-01"})
+        self.assertEqual(a["location"], "cupboard")
+        self.assertEqual(a["expiry_date"], b["expiry_date"])
+
+    def test_auto_never_picks_the_pantry(self):
+        item = self.store.build_item({"name": "Chickpeas", "location": "auto"})
+        self.assertEqual(item["location"], "cupboard")
+
+    def test_default_location_is_fridge(self):
+        self.assertEqual(const.DEFAULT_LOCATION, "fridge")
+        self.assertEqual(const.LOCATIONS, ["cupboard", "fridge", "freezer", "pantry"])
+
+    def test_shelf_life_keys_exclude_cupboard(self):
+        self.assertNotIn("cupboard", const.SHELF_LIFE_KEYS)
+        self.assertEqual(const.shelf_life_key("cupboard"), "pantry")
 
 
 class TestUserTemplates(unittest.TestCase):

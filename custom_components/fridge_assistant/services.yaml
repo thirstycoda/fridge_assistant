@@ -12,6 +12,7 @@ add_item:
       selector:
         select:
           options:
+            - cupboard
             - fridge
             - freezer
             - pantry

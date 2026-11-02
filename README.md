@@ -225,11 +225,16 @@ lists the open lines of a to-do list (for example one filled from an online
 grocery order), and for each product you either scan its barcode or tap its
 line, then press **Cupboard**, **Fridge**, **Freezer** or **Pantry**. The
 product's usual place is highlighted. The item is added with its barcode (so
-it's recognised next time) and the line is counted down or removed.
+it's recognised next time) and the line is counted down; finished lines are
+ticked off and stay listed with where everything went, each with an undo.
+With a `delivery_entity` (a timestamp sensor of the delivery window's start,
+with a `delivery_window` attribute such as `20:00 - 21:00`) the card shows a
+countdown to the delivery.
 
 ```yaml
 type: custom:fridge-assistant-unpack-card
 todo_entity: todo.ocado_delivery
+delivery_entity: sensor.ocado_uk_deliveries_next_delivery   # optional
 title: Unpack        # optional
 notes: Ocado         # optional, saved on items that came from a line
 ```

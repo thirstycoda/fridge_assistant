@@ -4,18 +4,25 @@
  * to-do list (filled from an order, e.g. by the Ocado integration), lets you
  * scan a product's barcode or tap a line, and then press where it goes:
  * Cupboard, Fridge, Freezer or Pantry. The item is added to Fridge Assistant
- * (the barcode is remembered for next time) and the line is counted down or
- * removed from the list.
+ * (the barcode is remembered for next time). The line is counted down and,
+ * once everything on it is put away, ticked off; ticked lines stay on the list
+ * showing where things went, with an undo.
  *
  *   type: custom:fridge-assistant-unpack-card
  *   todo_entity: todo.ocado_delivery
+ *   delivery_entity: sensor.ocado_uk_deliveries_next_delivery   # optional countdown
  *   title: Unpack            # optional
  *   notes: Ocado             # optional, saved on items that came from a line
  *
  * Each line's description may hold JSON from the filling automation:
  *   {"name": "<product title>", "qty": 2, "location": "auto"|"fridge"|...,
  *    "ordered": "<original product, when this line is a substitute>"}
- * Without it, the summary ("2 × Product") is parsed instead.
+ * Without it, the summary ("2 × Product") is parsed instead. The card adds
+ * "total" (the ordered quantity), keeps "qty" as what's left to put away and
+ * records each placement in "placed": [{"id", "name", "location", "qty"}].
+ *
+ * The delivery entity's state is the window start (a timestamp); its
+ * "delivery_window" attribute ("20:00 - 21:00") gives the end.
  */
 
 const LOCATIONS = [
@@ -55,10 +62,37 @@ function parseLine(item) {
   let info = {};
   try { info = JSON.parse(item.description || "{}") || {}; } catch (e) { info = {}; }
   const m = QTY_RE.exec(item.summary || "");
-  const qty = Number(info.qty) || (m ? Number(m[1]) : 1) || 1;
+  const done = item.status === "completed";
+  const total = Number(info.total) || (m ? Number(m[1]) : 0) || Number(info.qty) || 1;
+  const left = done ? 0 : (info.qty != null && info.qty !== "" ? Number(info.qty) : total);
+  const placed = Array.isArray(info.placed) ? info.placed : [];
   const name = info.name
     || (item.summary || "").replace(QTY_RE, "").replace(/\s*\(substitute\)\s*$/i, "").trim();
-  return { uid: item.uid, summary: item.summary, info, qty, name };
+  return { uid: item.uid, summary: item.summary, info, qty: Math.max(0, left), total, placed, done, name };
+}
+
+function pad(n) { return String(n).padStart(2, "0"); }
+
+/* Delivery window from the delivery entity: {start, end} as Dates, or null. */
+function deliveryWindow(stateObj) {
+  if (!stateObj) return null;
+  const start = new Date(stateObj.state);
+  if (Number.isNaN(start.getTime())) return null;
+  let end = null;
+  const w = /(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/.exec(stateObj.attributes.delivery_window || "");
+  if (w) {
+    const mins = (Number(w[3]) * 60 + Number(w[4])) - (Number(w[1]) * 60 + Number(w[2]));
+    end = new Date(start.getTime() + ((mins + 1440) % 1440 || 60) * 60000);
+  } else end = new Date(start.getTime() + 3600000);
+  return { start, end };
+}
+
+function until(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d >= 1) return `${d} day${d === 1 ? "" : "s"} ${h % 24} h`;
+  return `${h} h ${pad(m % 60)} min`;
 }
 
 function makeDetector() {
@@ -95,6 +129,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (!config || !config.todo_entity) throw new Error("Set todo_entity (e.g. todo.ocado_delivery)");
     this._config = { title: "Unpack", notes: "Ocado", ...config };
     this._lines = this._lines || [];
+    this._all = this._all || [];
     this._loaded = this._loaded || false;
     this._matchCache = this._matchCache || new Map();
     this._sel = this._sel || null;
@@ -106,13 +141,20 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     this._hass = hass;
     if (!this.shadowRoot) this._build();
     if (first || !this._unsub) this._subscribe();
+    const ent = this._config && this._config.delivery_entity;
+    const st = ent ? hass.states[ent] : null;
+    if (st !== this._deliveryState) { this._deliveryState = st; this._renderHead(); }
   }
 
   getCardSize() { return 6; }
 
-  connectedCallback() { if (this._hass && !this._unsub) this._subscribe(); }
+  connectedCallback() {
+    if (this._hass && !this._unsub) this._subscribe();
+    if (!this._tick) this._tick = setInterval(() => this._renderHead(), 30000);
+  }
 
   disconnectedCallback() {
+    if (this._tick) { clearInterval(this._tick); this._tick = null; }
     this._stopCamera();
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
   }
@@ -123,12 +165,13 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (!this._hass || !this._config || this._unsub || !this.isConnected) return;
     this._unsub = this._hass.connection.subscribeMessage(
       (msg) => {
-        this._lines = (msg.items || [])
-          .filter((i) => i.status === "needs_action")
-          .map(parseLine);
+        this._all = (msg.items || []).map(parseLine);
+        this._lines = this._all.filter((l) => !l.done && l.qty > 0);
         this._loaded = true;
-        if (this._sel && this._sel.line && !this._lines.find((l) => l.uid === this._sel.line.uid)) {
-          this._sel.line = null;
+        if (this._sel && this._sel.line) {
+          const fresh = this._all.find((l) => l.uid === this._sel.line.uid) || null;
+          this._sel.line = fresh;
+          if (fresh) this._sel.qty = Math.min(Math.max(1, this._sel.qty), Math.max(1, fresh.qty));
         }
         this._renderList();
         this._renderSel();
@@ -174,10 +217,11 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       line,
       product: keep ? keep.product : null,
       barcode: keep ? keep.barcode : null,
-      qty: line.qty,
+      qty: Math.max(1, line.qty),
       suggested: null,
     };
     this._renderSel();
+    this._renderList();
     this._sel.suggested = await this._lineLocation(line);
     this._renderSel();
     this.shadowRoot.getElementById("sel").scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -234,6 +278,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     else if (!line) this._status(`Not on the list — pick its line below, or just pick where it goes.`);
     else this._status("");
     this._renderSel();
+    this._renderList();
     const sugLine = line ? await this._lineLocation(line) : null;
     const sugProd = !sugLine && name ? ((await this._match(name)) || {}).location : null;
     if (this._sel && this._sel.barcode === code) {
@@ -269,21 +314,14 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     this._renderSel();
     try {
       const res = await this._hass.callWS({ type: "fridge_assistant/add_item", item });
-      if (line) {
-        const left = line.qty - qty;
-        const target = { entity_id: this._config.todo_entity };
-        if (left <= 0) {
-          await this._hass.callService("todo", "remove_item", { item: line.uid }, target);
-        } else {
-          const info = { ...line.info, qty: left };
-          const rename = QTY_RE.test(line.summary)
-            ? line.summary.replace(QTY_RE, `${left} × `)
-            : `${left} × ${line.summary}`;
-          await this._hass.callService("todo", "update_item",
-            { item: line.uid, rename, description: JSON.stringify(info) }, target);
-        }
-      }
       const added = res && res.item;
+      if (line) {
+        const left = Math.max(0, line.qty - qty);
+        const placed = line.placed.concat([{
+          id: added ? added.id : null, name: added ? added.name : contents, location, qty,
+        }]);
+        await this._saveLine(line, { qty: left, placed });
+      }
       this._status(`✓ ${added ? added.name : contents}${qty > 1 ? ` ×${qty}` : ""} → ${LOCATION_LABEL[location]}`
         + (added && added.code ? ` (label ${added.code})` : ""));
       const again = sel.fromCamera;
@@ -292,6 +330,37 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       if (again) this._startCamera();
     } catch (err) {
       this._status(`Couldn't add it: ${err.message || err}`, true);
+    } finally {
+      this._busy = false;
+      this._renderSel();
+    }
+  }
+
+  async _saveLine(line, changes) {
+    const info = { ...line.info, total: line.total, ...changes };
+    const left = Number(info.qty) || 0;
+    await this._hass.callService("todo", "update_item", {
+      item: line.uid,
+      description: JSON.stringify(info),
+      status: left > 0 ? "needs_action" : "completed",
+    }, { entity_id: this._config.todo_entity });
+  }
+
+  async _undo(line, index) {
+    const p = line.placed[index];
+    if (!p || this._busy) return;
+    this._busy = true;
+    this._renderSel();
+    try {
+      if (p.id) {
+        try { await this._hass.callWS({ type: "fridge_assistant/remove_item", item_id: p.id }); }
+        catch (e) { if (e.code !== "not_found") throw e; }   // already eaten or removed
+      }
+      const placed = line.placed.filter((_, i) => i !== index);
+      await this._saveLine(line, { qty: Math.min(line.total, line.qty + (Number(p.qty) || 1)), placed });
+      this._status(`Undone: ${p.name || line.name} is back on the list.`);
+    } catch (err) {
+      this._status(`Couldn't undo: ${err.message || err}`, true);
     } finally {
       this._busy = false;
       this._renderSel();
@@ -437,6 +506,22 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         .row .n { flex: 1 1 auto; }
         .chip { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; }
         .empty { color: var(--secondary-text-color); margin-top: 14px; }
+        .countdown { margin-top: 10px; padding: 12px 14px; border-radius: 14px;
+          background: var(--secondary-background-color); display: flex; align-items: center; gap: 12px; }
+        .countdown ha-icon { --mdc-icon-size: 28px; color: var(--primary-color); }
+        .countdown .big { font-size: 22px; font-weight: 700; line-height: 1.2; }
+        .countdown .when { color: var(--secondary-text-color); font-size: 14px; }
+        .countdown.now { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+        .countdown.now ha-icon, .countdown.now .when { color: inherit; }
+        .row.done { opacity: .6; }
+        .row.done .n { text-decoration: line-through; }
+        .tick { color: var(--success-color, #43a047); --mdc-icon-size: 20px; }
+        .placed { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .placed div { display: flex; align-items: center; gap: 8px; }
+        .placed span { flex: 1 1 auto; }
+        .placed button { padding: 4px 12px; font-size: 14px; }
+        .heading { margin-top: 16px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+          color: var(--secondary-text-color); }
       </style>
       <ha-card>
         <div class="head" id="head"></div>
@@ -470,9 +555,10 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (act === "scan") { this._showManual(false); this._cam ? this._stopCamera() : this._startCamera(); }
     else if (act === "type") { this._stopCamera(); this._showManual(this.shadowRoot.getElementById("manual").hidden); }
     else if (act === "line") {
-      const line = this._lines.find((l) => l.uid === el.dataset.uid);
+      const line = this._all.find((l) => l.uid === el.dataset.uid);
       if (line) this._selectLine(line);
     } else if (act === "loc") this._place(el.dataset.loc);
+    else if (act === "undo" && this._sel && this._sel.line) this._undo(this._sel.line, Number(el.dataset.i));
     else if (act === "cancel") { this._sel = null; this._status(""); this._renderSel(); this._renderList(); }
     else if (act === "minus" && this._sel) { this._sel.qty = Math.max(1, this._sel.qty - 1); this._renderSel(); }
     else if (act === "plus" && this._sel) {
@@ -506,13 +592,42 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const h = this.shadowRoot && this.shadowRoot.getElementById("head");
     if (!h || !this._config) return;
     const n = this._lines.length;
+    const total = this._all.length;
+    const sub = !this._loaded ? "Loading…"
+      : !total ? "Nothing on the list yet"
+        : n ? `${total - n} of ${total} lines put away`
+          : `All ${total} lines put away`;
     h.innerHTML = `
       <div class="title">${esc(this._config.title)}
-        <div class="sub">${this._loaded ? (n ? `${n} line${n === 1 ? "" : "s"} to put away` : "Nothing left on the list") : "Loading…"}</div>
+        <div class="sub">${sub}</div>
       </div>
       <button class="primary" data-act="scan"><ha-icon icon="${this._cam ? "mdi:close" : "mdi:barcode-scan"}"></ha-icon>
         ${this._cam ? "Stop" : "Scan"}</button>
-      <button data-act="type" title="Type a barcode"><ha-icon icon="mdi:keyboard-outline"></ha-icon></button>`;
+      <button data-act="type" title="Type a barcode"><ha-icon icon="mdi:keyboard-outline"></ha-icon></button>
+      ${this._countdownHtml()}`;
+  }
+
+  _countdownHtml() {
+    const win = deliveryWindow(this._deliveryState);
+    if (!win) return "";
+    const now = Date.now();
+    const t = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const day = win.start.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    let cls = "", icon = "mdi:truck-delivery-outline", big, when;
+    if (now < win.start.getTime()) {
+      big = `Delivery in ${until(win.start.getTime() - now)}`;
+      when = `${day}, ${t(win.start)}–${t(win.end)}`;
+    } else if (now < win.end.getTime()) {
+      cls = " now"; icon = "mdi:truck-fast-outline";
+      big = "Delivery due now";
+      when = `Window ends ${t(win.end)} (${until(win.end.getTime() - now)})`;
+    } else {
+      icon = "mdi:package-variant-closed-check";
+      big = "Delivered";
+      when = `${day}, ${t(win.start)}–${t(win.end)}`;
+    }
+    return `<div class="countdown${cls}" style="flex-basis:100%"><ha-icon icon="${icon}"></ha-icon>
+      <div><div class="big">${esc(big)}</div><div class="when">${esc(when)}</div></div></div>`;
   }
 
   _renderSel() {
@@ -523,15 +638,18 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (!sel) { box.innerHTML = ""; return; }
     const p = sel.product;
     const line = sel.line;
+    const open = !line || line.qty > 0;
     const title = line ? line.name : (p ? p.name : `Barcode ${sel.barcode}`);
     const subParts = [];
     if (p && line && p.name !== line.name) subParts.push(`Scanned: ${p.name}`);
     if (!line) subParts.push(this._lines.length ? "Not matched to a line" : "Not on the list");
     if (line && line.info.ordered) subParts.push(`Substitute for ${line.info.ordered}`);
+    if (line && !open) subParts.push("All put away");
     const options = [`<option value="">— not on the list —</option>`]
       .concat(this._lines.map((l) => `<option value="${esc(l.uid)}"${line && l.uid === line.uid ? " selected" : ""}>${esc(l.summary)}</option>`))
       .join("");
     const max = line ? line.qty : 99;
+    const placed = line ? line.placed : [];
     box.innerHTML = `
       <div class="prod">
         ${p && p.photo ? `<img src="${esc(p.photo)}" alt="">` : ""}
@@ -540,20 +658,45 @@ class FridgeAssistantUnpackCard extends HTMLElement {
           <div class="pline">${esc(subParts.join(" · "))}</div>
         </div>
       </div>
-      ${sel.barcode && this._lines.length ? `<select id="pick" aria-label="Order line">${options}</select>` : ""}
-      ${max > 1 || sel.qty > 1 ? `
+      ${placed.length ? `<div class="placed">${placed.map((pl, i) => `
+        <div><ha-icon class="tick" icon="mdi:check-circle"></ha-icon>
+          <span>${esc(pl.qty > 1 ? `${pl.qty} × ` : "")}${esc(pl.name || line.name)} → ${esc(LOCATION_LABEL[pl.location] || pl.location || "?")}</span>
+          <button data-act="undo" data-i="${i}" ${this._busy ? "disabled" : ""}>Undo</button></div>`).join("")}
+      </div>` : ""}
+      ${open && sel.barcode && this._lines.length ? `<select id="pick" aria-label="Order line">${options}</select>` : ""}
+      ${open && (max > 1 || sel.qty > 1) ? `
         <div class="qty">
           <button data-act="minus" ${sel.qty <= 1 ? "disabled" : ""}>−</button>
-          <span>${sel.qty}${line ? ` of ${line.qty}` : ""}</span>
+          <span>${sel.qty}${line ? ` of ${line.qty} left` : ""}</span>
           <button data-act="plus" ${sel.qty >= max ? "disabled" : ""}>+</button>
         </div>` : ""}
-      <div class="locs">
+      ${open ? `<div class="locs">
         ${LOCATIONS.map((l) => `
           <button class="loc${sel.suggested === l.key ? " sug" : ""}" data-act="loc" data-loc="${l.key}" ${this._busy || (!line && !p) ? "disabled" : ""}>
             <ha-icon icon="${l.icon}"></ha-icon>${l.label}<small>${sel.suggested === l.key ? "usual place" : ""}</small>
           </button>`).join("")}
-      </div>
-      <button class="cancel" data-act="cancel">Cancel</button>`;
+      </div>` : ""}
+      <button class="cancel" data-act="cancel">${open ? "Cancel" : "Close"}</button>`;
+  }
+
+  _rowHtml(l, selUid) {
+    const where = (pl) => LOCATION_LABEL[pl.location] || "";
+    let chip;
+    if (l.qty <= 0) {
+      const places = [...new Set(l.placed.map(where).filter(Boolean))];
+      chip = places.join(", ");
+    } else if (l.placed.length) {
+      chip = `${l.qty} left`;
+    } else {
+      const fixed = l.info.location && l.info.location !== "auto" ? l.info.location : null;
+      const m = this._cachedMatch(l.name);
+      chip = LOCATION_LABEL[fixed || (m && m.location) || ""] || "";
+    }
+    return `<button class="row${l.qty <= 0 ? " done" : ""}${l.uid === selUid ? " on" : ""}" data-act="line" data-uid="${esc(l.uid)}">
+      ${l.qty <= 0 ? `<ha-icon class="tick" icon="mdi:check-circle"></ha-icon>` : ""}
+      <span class="n">${esc(l.summary)}</span>
+      <span class="chip">${esc(chip)}</span>
+    </button>`;
   }
 
   _renderList() {
@@ -561,20 +704,16 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (!box) return;
     this._renderHead();
     if (!this._loaded) { box.innerHTML = ""; return; }
-    if (!this._lines.length) {
-      box.innerHTML = `<div class="empty">Scan anything to add it to Fridge Assistant.</div>`;
+    if (!this._all.length) {
+      box.innerHTML = `<div class="empty">The order appears here when the delivery window opens. Scan anything to add it to Fridge Assistant.</div>`;
       return;
     }
     const selUid = this._sel && this._sel.line && this._sel.line.uid;
-    box.innerHTML = `<div class="list">${this._lines.map((l) => {
-      const fixed = l.info.location && l.info.location !== "auto" ? l.info.location : null;
-      const m = this._cachedMatch(l.name);
-      const where = fixed || (m && m.location) || "";
-      return `<button class="row${l.uid === selUid ? " on" : ""}" data-act="line" data-uid="${esc(l.uid)}">
-        <span class="n">${esc(l.summary)}</span>
-        <span class="chip">${esc(LOCATION_LABEL[where] || "")}</span>
-      </button>`;
-    }).join("")}</div>`;
+    const done = this._all.filter((l) => l.qty <= 0);
+    box.innerHTML = `
+      ${this._lines.length ? `<div class="list">${this._lines.map((l) => this._rowHtml(l, selUid)).join("")}</div>` : ""}
+      ${done.length ? `<div class="heading">Put away (${done.length})</div>
+        <div class="list">${done.map((l) => this._rowHtml(l, selUid)).join("")}</div>` : ""}`;
   }
 }
 

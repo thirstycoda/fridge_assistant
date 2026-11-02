@@ -218,6 +218,26 @@ The panel is built to be used one-handed with your phone in hand, standing at th
 - 44px+ tap targets and 16px inputs (avoids iOS auto-zoom on focus).
 - A thumb-reachable floating add (➕) and scan (📷) button, bottom-right.
 
+## Unpack card
+
+The integration also ships a dashboard card for putting a delivery away. It
+lists the open lines of a to-do list (for example one filled from an online
+grocery order), and for each product you either scan its barcode or tap its
+line, then press **Cupboard**, **Fridge**, **Freezer** or **Pantry**. The
+product's usual place is highlighted. The item is added with its barcode (so
+it's recognised next time) and the line is counted down or removed.
+
+```yaml
+type: custom:fridge-assistant-unpack-card
+todo_entity: todo.ocado_delivery
+title: Unpack        # optional
+notes: Ocado         # optional, saved on items that came from a line
+```
+
+A line's description may hold JSON — `{"name": "<product title>", "qty": 2,
+"location": "auto", "ordered": "<original, for a substitute>"}`; otherwise
+the summary (`2 × Product`) is used. Live scanning needs HTTPS.
+
 ## Language
 
 Fridge Assistant follows a simple rule everywhere — panel, printed labels, AI prompts, and the daily

@@ -550,7 +550,15 @@ async def ws_match_template(hass, connection, msg) -> None:
                 "expiry_date": (base + timedelta(days=days)).isoformat(),
                 "source": "template",
             }
-    connection.send_result(msg["id"], {"template": tpl, "suggestion": suggestion})
+    connection.send_result(
+        msg["id"],
+        {
+            "template": tpl,
+            "suggestion": suggestion,
+            # Where the matched product normally lives (see natural_location).
+            "location": runtime.store.natural_location(tpl) if tpl else None,
+        },
+    )
 
 
 @websocket_api.websocket_command(

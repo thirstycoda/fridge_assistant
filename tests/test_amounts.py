@@ -159,6 +159,24 @@ class TestConsume(unittest.TestCase):
         self.store.consume_ingredients([{"food": "something odd", "template_id": self.flour["id"], "quantity": 100, "unit": "g"}])
         self.assertEqual(self.store.items[item["id"]]["amount"], 400)
 
+    def test_backfill_older_items(self):
+        item = self.add("Plain flour", quantity="2")
+        for key in ("amount", "amount_initial", "amount_unit"):
+            item.pop(key)
+        loose = self.add("Dragon fruit")                    # no template
+        self.assertEqual(self.store.backfill_amounts(), 1)
+        self.assertEqual(item["amount"], 3000)
+        self.assertEqual(item["amount_unit"], "g")
+        self.assertNotIn("amount", loose)
+        self.assertEqual(self.store.backfill_amounts(), 0)  # already done
+
+    def test_setting_pack_size_backfills(self):
+        plain = self.store.upsert_user_template({"name": "Rice vinegar", "category": "other"})
+        item = self.add("Rice vinegar")
+        self.assertNotIn("amount", item)
+        self.store.upsert_user_template({"id": plain["id"], "name": "Rice vinegar", "amount_unit": "ml", "pack_amount": 150})
+        self.assertEqual(item["amount"], 150)
+
     def test_template_keeps_amount_fields(self):
         tpl = self.store.upsert_user_template({"id": self.flour["id"], "name": "Plain flour", "notes": "x"})
         self.assertEqual(tpl["pack_amount"], 1500)

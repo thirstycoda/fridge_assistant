@@ -254,6 +254,8 @@ class FridgeStore:
             self.hidden = set(data.get("hidden", []))
             self.history = list(data.get("history", []))[:MAX_HISTORY]
         self._seed = await self.hass.async_add_executor_job(self._read_seed)
+        if self.backfill_amounts():
+            await self.async_save()
         _LOGGER.debug(
             "Fridge Assistant loaded: %s items, %s user templates, %s seed templates",
             len(self.items),
@@ -460,6 +462,8 @@ class FridgeStore:
                 "opened_fridge", existing.get("opened_fridge")
             )
         self.user_templates[tpl_id] = tpl
+        if tpl.get("amount_unit"):
+            self.backfill_amounts(tpl_id)
         return tpl
 
     def remove_user_template(self, template_id: str) -> bool:
@@ -909,6 +913,23 @@ class FridgeStore:
         item["amount"] = item["amount_initial"] = round(start, 2)
         item["amount_unit"] = normalize_unit(template["amount_unit"])
         return start
+
+    def backfill_amounts(self, template_id: str | None = None) -> int:
+        """Give items added before amounts existed a starting (full-pack) amount.
+
+        Only items whose template knows its pack size are filled in; returns
+        how many items changed.
+        """
+        changed = 0
+        for item in self.items.values():
+            if item.get("amount") is not None:
+                continue
+            if template_id and item.get("template_id") != template_id:
+                continue
+            template = self.get_template(item.get("template_id"))
+            if template and template.get("amount_unit") and self._ensure_amount(item, template) is not None:
+                changed += 1
+        return changed
 
     def consume_ingredients(
         self,

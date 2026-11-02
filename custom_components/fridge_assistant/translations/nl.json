@@ -53,7 +53,8 @@
       "options": {
         "fridge": "Koelkast",
         "freezer": "Vriezer",
-        "pantry": "Buiten koelkast"
+        "pantry": "Buiten koelkast",
+        "auto": "Automatisch (waar het het langst goed blijft)"
       }
     },
     "complete_action": {

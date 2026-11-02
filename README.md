@@ -143,6 +143,11 @@ match is auto-suggested, but a loose one-word overlap is not (so "pizza" won't s
 that mention the excluded word. Every suggestion can be dismissed in favour of a manual date, a
 different template, or an AI estimate.
 
+Shop product titles are matched too: when a template's name or alias appears whole inside a
+longer title, brand and marketing words are ignored and simple English plurals are folded, so
+"M&S Organic Red Onions" finds *Red onion* and "Clearspring Silken & Smooth Tofu" finds
+*Silken tofu* (the most specific name wins).
+
 The full database is editable from the **📚 Templates** manager: built-in templates can be tweaked
 (creating a personal override, restorable with one tap) or hidden entirely; you can also add your
 own from scratch, with or without AI.
@@ -267,7 +272,7 @@ Developer Tools → Actions.
 
 | Service | Description | Key fields |
 |---|---|---|
-| `fridge_assistant.add_item` | Add an item. Expiry is estimated automatically from contents + location if not given. | `name`, `contents`, `location`, `added_date`, `expiry_date`, `quantity`, `portions` |
+| `fridge_assistant.add_item` | Add an item. Expiry is estimated automatically from contents + location if not given. `location: auto` puts it where its template keeps longest (cupboard, fridge or freezer). | `name`, `contents`, `location`, `added_date`, `expiry_date`, `quantity`, `portions` |
 | `fridge_assistant.update_item` | Update fields on an existing item. | `id`, *(any item field)* |
 | `fridge_assistant.remove_item` | Delete an item outright (no history entry). | `id` |
 | `fridge_assistant.complete_item` | Finish an item as eaten or tossed — logged to history with who/when. | `id`, `action` (`eaten` / `tossed`) |

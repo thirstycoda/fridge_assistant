@@ -27,6 +27,7 @@ from .const import (
     DOMAIN,
     HISTORY_ACTIONS,
     LEGACY_LOCATIONS,
+    LOCATION_AUTO,
     LOCATIONS,
     MAX_PORTIONS,
     localized,
@@ -128,7 +129,7 @@ ADD_ITEM_SCHEMA = vol.Schema(
         # Legacy Dutch values stay accepted so old automations keep working;
         # store.build_item canonicalises them to the English ones.
         vol.Optional("location", default=LOCATIONS[0]): vol.In(
-            [*LOCATIONS, *LEGACY_LOCATIONS]
+            [*LOCATIONS, *LEGACY_LOCATIONS, LOCATION_AUTO]
         ),
         vol.Optional("category"): cv.string,
         vol.Optional("kind"): cv.string,

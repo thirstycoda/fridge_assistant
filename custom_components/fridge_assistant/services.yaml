@@ -15,6 +15,7 @@ add_item:
             - fridge
             - freezer
             - pantry
+            - auto
           translation_key: item_location
     added_date:
       selector:

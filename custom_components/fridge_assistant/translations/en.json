@@ -53,7 +53,8 @@
       "options": {
         "fridge": "Fridge",
         "freezer": "Freezer",
-        "pantry": "Pantry"
+        "pantry": "Pantry",
+        "auto": "Automatic (where it keeps best)"
       }
     },
     "complete_action": {

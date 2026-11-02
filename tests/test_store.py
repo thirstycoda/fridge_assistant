@@ -122,6 +122,73 @@ class TestMatchTemplate(unittest.TestCase):
         self.assertIsNone(self.store.match_template("   "))
 
 
+class TestProductTitleMatching(unittest.TestCase):
+    """Shop product titles carry brand and marketing words around the food name."""
+
+    def setUp(self):
+        self.store = make_store("en")
+        for name, aliases, life in (
+            ("Red onion", ["red onions"], {"fridge": 30, "freezer": 180, "pantry": 30}),
+            ("Spring onions", ["salad onions"], {"fridge": 7, "freezer": 90, "pantry": None}),
+            ("Firm tofu", ["tofu"], {"fridge": 4, "freezer": 150, "pantry": None}),
+            ("Silken tofu", [], {"fridge": 3, "freezer": None, "pantry": None}),
+            ("Blueberries", [], {"fridge": 7, "freezer": 300, "pantry": None}),
+            ("Frozen peas", [], {"fridge": None, "freezer": 365, "pantry": None}),
+        ):
+            self.store.upsert_user_template(
+                {"name": name, "aliases": aliases, "shelf_life": life}
+            )
+
+    def _name(self, query):
+        match = self.store.match_template(query)
+        return match["name"] if match else None
+
+    def test_name_inside_product_title(self):
+        self.assertEqual(self._name("M&S Organic Red Onions"), "Red onion")
+        self.assertEqual(self._name("Dragonfly Gluten Free Organic Super Firm Fresh Tofu"), "Firm tofu")
+
+    def test_most_specific_name_wins(self):
+        # "tofu" (an alias of Firm tofu) is also inside this title, but
+        # "silken tofu" is the longer, more specific match.
+        self.assertEqual(self._name("Clearspring Organic Japanese Silken & Smooth Tofu"), "Silken tofu")
+        self.assertEqual(self._name("M&S Organic Salad Onions"), "Spring onions")
+
+    def test_plurals_are_folded(self):
+        self.assertEqual(self._name("Ocado Organic Frozen Pea"), "Frozen peas")
+
+    def test_unrelated_title_still_unmatched(self):
+        self.assertIsNone(self._name("Cheeky Panda Bamboo Toilet Paper"))
+
+    def test_exact_name_still_preferred(self):
+        self.assertEqual(self._name("tofu"), "Firm tofu")
+
+
+class TestAutoLocation(unittest.TestCase):
+    def setUp(self):
+        self.store = make_store("en")
+
+    def test_natural_location(self):
+        nat = self.store.natural_location
+        self.assertEqual(nat({"shelf_life": {"fridge": 30, "pantry": 30}}), "pantry")
+        self.assertEqual(nat({"shelf_life": {"fridge": 7, "pantry": 4}}), "fridge")
+        self.assertEqual(nat({"shelf_life": {"fridge": 4, "pantry": None}}), "fridge")
+        self.assertEqual(nat({"shelf_life": {"freezer": 365}}), "freezer")
+        self.assertEqual(nat(None), const.LOCATIONS[0])
+
+    def test_build_item_with_auto_location(self):
+        tpl = self.store.upsert_user_template(
+            {"name": "Sweet potatoes", "shelf_life": {"fridge": None, "freezer": 300, "pantry": 21}}
+        )
+        item = self.store.build_item({"name": "Ocado Organic Sweet Potatoes", "location": "auto"})
+        self.assertEqual(item["location"], "pantry")
+        self.assertEqual(item["template_id"], tpl["id"])
+        self.assertIsNotNone(item["expiry_date"])
+
+    def test_auto_without_template_falls_back(self):
+        item = self.store.build_item({"name": "Something unknown xyz", "location": "auto"})
+        self.assertEqual(item["location"], const.LOCATIONS[0])
+
+
 class TestUserTemplates(unittest.TestCase):
     def test_new_template_never_overwrites_builtin(self):
         store = make_store()

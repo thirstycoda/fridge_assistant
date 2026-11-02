@@ -30,6 +30,10 @@ from .const import (
     HISTORY_ACTIONS,
     KIND_DISH,
     KIND_INGREDIENT,
+    LOCATION_AUTO,
+    LOCATION_FREEZER,
+    LOCATION_FRIDGE,
+    LOCATION_PANTRY,
     LOCATIONS,
     MAX_HISTORY,
     MAX_PORTIONS,
@@ -74,6 +78,21 @@ _NEG_WORDS = {"zonder", "geen"}
 
 def _tokens(text: str) -> set[str]:
     return {t for t in _normalize(text).split() if t and t not in _STOP}
+
+
+def _stem(word: str) -> str:
+    """Fold simple English plurals so 'onions' meets 'onion' and 'berries' meets 'berry'."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 4 and word.endswith("oes"):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _stems(tokens: set[str]) -> set[str]:
+    return {_stem(t) for t in tokens}
 
 
 def _negated_tokens(text: str) -> set[str]:
@@ -325,6 +344,7 @@ class FridgeStore:
             return None
         negated = _negated_tokens(query)
         qtokens = _tokens(query) - negated
+        qstems = _stems(qtokens)
         best: tuple[float, dict[str, Any]] | None = None
 
         for tpl in self.all_templates():
@@ -352,6 +372,17 @@ class FridgeStore:
                         score = 60.0
                     else:  # only partial overlap — usually a wrong guess
                         score = 20.0 + 6.0 * len(overlap)
+
+            # A single name or alias found whole inside a longer product title,
+            # e.g. "red onion" in "M&S Organic Red Onions" or "firm tofu" in
+            # "Dragonfly Super Firm Fresh Tofu". Brand and marketing words are
+            # ignored, plurals are folded, and the most specific (longest) name
+            # wins, so "silken tofu" beats "tofu".
+            if score < 85.0 and qstems:
+                for nn in norm_names:
+                    nstems = _stems(_tokens(nn))
+                    if nstems and nstems <= qstems:
+                        score = max(score, 59.0 + min(len(nstems), 5))
 
             if score and (best is None or score > best[0]):
                 best = (score, tpl)
@@ -441,6 +472,22 @@ class FridgeStore:
         if not item.get("icon"):
             item["icon"] = CATEGORIES.get(cat, {}).get("icon", DEFAULT_ICON)
 
+    @staticmethod
+    def natural_location(template: dict[str, Any] | None) -> str:
+        """Where a template's food keeps best: the cupboard when it lasts at least
+        as long there as in the fridge, else the fridge, else the freezer."""
+        life = (template or {}).get("shelf_life") or {}
+        fridge, freezer, pantry = (
+            life.get(LOCATION_FRIDGE), life.get(LOCATION_FREEZER), life.get(LOCATION_PANTRY)
+        )
+        if pantry and (fridge is None or pantry >= fridge):
+            return LOCATION_PANTRY
+        if fridge:
+            return LOCATION_FRIDGE
+        if freezer:
+            return LOCATION_FREEZER
+        return LOCATIONS[0]
+
     def build_item(
         self, data: dict[str, Any], code_format: str = DEFAULT_CODE_FORMAT
     ) -> dict[str, Any]:
@@ -449,13 +496,17 @@ class FridgeStore:
         today = now.date()
         # Accept legacy Dutch values from old automations / service calls.
         loc = canonical_location(data.get("location"))
-        location = loc if loc in LOCATIONS else LOCATIONS[0]
 
         template = self.get_template(data.get("template_id"))
         if template is None and data.get("contents"):
             template = self.match_template(data["contents"])
         if template is None and data.get("name"):
             template = self.match_template(data["name"])
+
+        if loc == LOCATION_AUTO:
+            location = self.natural_location(template)
+        else:
+            location = loc if loc in LOCATIONS else LOCATIONS[0]
 
         added_date = data.get("added_date") or today.isoformat()
 

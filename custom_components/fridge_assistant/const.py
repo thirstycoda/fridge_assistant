@@ -32,6 +32,8 @@ LOCATION_FRIDGE: Final = "fridge"
 LOCATION_FREEZER: Final = "freezer"
 LOCATION_PANTRY: Final = "pantry"
 LOCATIONS: Final = [LOCATION_FRIDGE, LOCATION_FREEZER, LOCATION_PANTRY]
+# Service-only value for add_item: put the item where its template says it keeps best.
+LOCATION_AUTO: Final = "auto"
 
 LOCATION_META: Final = {
     LOCATION_FRIDGE: {"label": "Koelkast", "emoji": "🧊", "icon": "mdi:fridge"},

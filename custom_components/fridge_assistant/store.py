@@ -535,8 +535,12 @@ class FridgeStore:
         item = {
             "id": uuid.uuid4().hex,
             "code": generate_code((c for c in taken_codes if c), code_format),
+            # Without an explicit name, a matched template names the item
+            # ("Butter beans") rather than the raw text it was matched from
+            # (a shop's product title), which stays in contents.
             "name": (
                 data.get("name")
+                or (template or {}).get("name")
                 or data.get("contents")
                 or UNKNOWN_ITEM_NAME[resolve_language(self.hass)]
             ).strip(),

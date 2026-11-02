@@ -184,6 +184,19 @@ class TestAutoLocation(unittest.TestCase):
         self.assertEqual(item["template_id"], tpl["id"])
         self.assertIsNotNone(item["expiry_date"])
 
+    def test_matched_template_names_the_item(self):
+        self.store.upsert_user_template({"name": "Butter beans", "shelf_life": {"pantry": 365}})
+        item = self.store.build_item(
+            {"contents": "Biona Organic Butter Beans in Water", "location": "auto"}
+        )
+        self.assertEqual(item["name"], "Butter beans")
+        self.assertEqual(item["contents"], "Biona Organic Butter Beans in Water")
+        # An explicit name still wins, and unmatched text names the item itself.
+        named = self.store.build_item({"name": "Beans for chilli", "contents": "Butter beans"})
+        self.assertEqual(named["name"], "Beans for chilli")
+        unknown = self.store.build_item({"contents": "Something unknown xyz"})
+        self.assertEqual(unknown["name"], "Something unknown xyz")
+
     def test_auto_without_template_falls_back(self):
         item = self.store.build_item({"name": "Something unknown xyz", "location": "auto"})
         self.assertEqual(item["location"], const.DEFAULT_LOCATION)

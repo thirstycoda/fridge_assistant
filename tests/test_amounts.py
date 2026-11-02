@@ -177,6 +177,12 @@ class TestConsume(unittest.TestCase):
         self.store.upsert_user_template({"id": plain["id"], "name": "Rice vinegar", "amount_unit": "ml", "pack_amount": 150})
         self.assertEqual(item["amount"], 150)
 
+    def test_linking_a_template_starts_tracking(self):
+        item = self.add("Chia seeds", quantity="300 g")
+        self.assertNotIn("amount", item)
+        self.store.update_item(item["id"], {"template_id": self.flour["id"]})
+        self.assertEqual(item["amount"], 300)                  # scanned size kept
+
     def test_template_keeps_amount_fields(self):
         tpl = self.store.upsert_user_template({"id": self.flour["id"], "name": "Plain flour", "notes": "x"})
         self.assertEqual(tpl["pack_amount"], 1500)

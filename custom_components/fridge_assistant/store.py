@@ -681,6 +681,11 @@ class FridgeStore:
                 if value is not None and value > (item.get("amount_initial") or 0):
                     item["amount_initial"] = value
             item[key] = value
+        # Linking an item to a template that knows its pack size starts tracking it.
+        if "template_id" in changes and item.get("amount") is None:
+            template = self.get_template(item.get("template_id"))
+            if template and template.get("amount_unit"):
+                self._ensure_amount(item, template)
         item["updated_at"] = dt_util.now().isoformat()
         return item
 

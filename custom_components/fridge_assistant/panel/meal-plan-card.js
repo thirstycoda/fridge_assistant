@@ -5,8 +5,8 @@
  * a meal for three buttons: "Open in Mealie" (the recipe, in a new tab or the
  * browser), "Made it", which runs a script that takes the recipe's
  * ingredients out of Fridge Assistant, and "Print label", which adds the
- * cooked meal to the fridge as a dish and prints its sticker for the
- * container. Meals already made show a tick.
+ * cooked meal to Fridge Assistant as a dish (choose how many portions, and
+ * Freezer or Fridge) and prints a sticker for each portion. Meals already made show a tick.
  *
  *   type: custom:fridge-assistant-meal-plan-card
  *   day: 0                          # 0 = today, 1 = tomorrow, ...
@@ -14,7 +14,7 @@
  *   group: home                     # Mealie group slug in recipe links
  *   todo_entity: todo.planned_meals # where made meals are recorded
  *   script: script.cook_planned_meal
- *   label_location: fridge          # where "Print label" puts the dish
+ *   label_location: freezer         # Print label's default: freezer or fridge
  *
  * The plan comes from the Mealie integration's mealie.get_mealplan action
  * (shared by every card on the page). The script is called with
@@ -23,6 +23,7 @@
  * "done" record.
  */
 
+const MAX_PORTIONS = 12;
 const SECTIONS = [
   { key: "breakfast", label: "Breakfast", icon: "mdi:coffee-outline" },
   { key: "lunch", label: "Lunch", icon: "mdi:food-takeout-box-outline" },
@@ -104,6 +105,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     this._busy = this._busy || new Set();
     this._printing = this._printing || new Set();
     this._printed = this._printed || new Map();
+    this._labelState = this._labelState || new Map();
+    this._labelOpen = this._labelOpen || null;
     if (this.shadowRoot) this._render();
   }
 
@@ -200,40 +203,56 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     }
   }
 
-  /* Put the cooked meal in the fridge as a Fridge Assistant dish and print
-   * its sticker (for the container). Each tap is a new container. */
+  /* Put the cooked meal away as a Fridge Assistant dish (one item with a
+   * portion per container) and print a sticker for each portion. */
   async _printLabel(entry) {
     const id = String(entry.mealplan_id);
     if (this._printing.has(id)) return;
+    const opts = this._labelOpts(id);
     this._printing.add(id);
     this._printed.delete(id);
     this._render();
     const r = entry.recipe;
+    const where = opts.location === "fridge" ? "fridge" : "freezer";
     try {
       const added = await this._hass.callWS({
         type: "fridge_assistant/add_item",
         item: {
-          name: r.name, contents: r.name, kind: "dish",
-          location: this._config.label_location || "fridge",
+          name: r.name, contents: r.name, kind: "dish", location: where,
+          portions: opts.portions,
           photo: this._imageUrl(r) || null,
           notes: this._config.label_notes || null,
         },
       });
       const item = added && added.item;
-      const res = await this._hass.callWS({ type: "fridge_assistant/print_sticker", item_id: item.id });
-      if (res && res.printed) {
+      // One sticker per portion (AB12-1, AB12-2, ...), in order.
+      const targets = opts.portions > 1 ? Array.from({ length: opts.portions }, (_, i) => i + 1) : [null];
+      let printed = 0;
+      let failure = null;
+      for (const n of targets) {
+        const msg = { type: "fridge_assistant/print_sticker", item_id: item.id };
+        if (n != null) msg.portion = n;
+        const res = await this._hass.callWS(msg);
+        if (!res || !res.printed) { failure = res; break; }
+        printed += 1;
+      }
+      if (!failure) {
         const until = item.expiry_date
           ? ` · keeps until ${new Date(`${item.expiry_date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}`
           : "";
-        this._printed.set(id, { text: `Printed ${item.code}${until}` });
+        const what = printed > 1 ? `${printed} labels for ${item.code}` : `${item.code}`;
+        this._printed.set(id, { text: `Printed ${what} · in the ${where}${until}` });
+        this._labelOpen = null;
+        this._labelState.delete(id); // next time starts at 1, freezer again
       } else {
         const reasons = {
           printer_disabled: "printing is turned off in Fridge Assistant",
           printer_unreachable: "the label printer can't be reached",
           printer_not_connected: "the printer isn't connected or is off",
         };
-        const why = (res && (reasons[res.reason] || res.reason)) || "unknown error";
-        this._printed.set(id, { text: `Added ${item.code} to the fridge, but the label didn't print: ${why}`, bad: true });
+        const why = reasons[failure && failure.reason] || (failure && failure.reason) || "unknown error";
+        const done = printed ? ` (${printed} of ${targets.length} printed)` : "";
+        this._printed.set(id, { text: `Added ${item.code} to the ${where}, but the labels didn't all print${done}: ${why}`, bad: true });
       }
     } catch (err) {
       this._printed.set(id, { text: `Couldn't print: ${err.message || err}`, bad: true });
@@ -241,6 +260,13 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       this._printing.delete(id);
       this._render();
     }
+  }
+
+  _labelOpts(id) {
+    if (!this._labelState.has(id)) {
+      this._labelState.set(id, { portions: 1, location: this._config.label_location === "fridge" ? "fridge" : "freezer" });
+    }
+    return this._labelState.get(id);
   }
 
   // ---- rendering -----------------------------------------------------------------
@@ -277,6 +303,23 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .actions button.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
         .actions button:disabled { opacity: .6; cursor: default; }
         .actions ha-icon { --mdc-icon-size: 20px; }
+        .actions button.on { border-color: var(--primary-color); color: var(--primary-color); }
+        .label { margin: 0 8px 10px; padding: 10px 12px; border-radius: 12px; background: var(--card-background-color);
+          display: flex; flex-direction: column; gap: 10px; }
+        .lrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+        .stepper { display: flex; align-items: center; gap: 12px; }
+        .stepper b { min-width: 1.5em; text-align: center; font-size: 18px; }
+        .label button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color); color: var(--primary-text-color); }
+        .label button:disabled { opacity: .5; cursor: default; }
+        .stepper button { width: 40px; height: 36px; font-size: 20px; line-height: 1; }
+        .seg { display: flex; gap: 6px; }
+        .seg button { display: flex; align-items: center; gap: 4px; padding: 7px 12px; font-size: 14px; }
+        .seg button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
+        .seg ha-icon { --mdc-icon-size: 18px; }
+        .label button.print { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px;
+          font-weight: 500; background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
+        .label button.print ha-icon { --mdc-icon-size: 20px; }
         .printed { padding: 0 10px 10px; font-size: 13px; color: var(--secondary-text-color); }
         .printed.bad { color: var(--error-color); }
         .extra { margin-top: 14px; font-size: 14px; color: var(--secondary-text-color); }
@@ -294,7 +337,13 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       if (btn.dataset.act === "toggle") { this._open = this._open === id ? null : id; this._render(); }
       else if (btn.dataset.act === "open") window.open(this._recipeUrl(entry.recipe), "_blank", "noopener");
       else if (btn.dataset.act === "made") this._madeIt(entry);
+      else if (btn.dataset.act === "label") { this._labelOpen = this._labelOpen === id ? null : id; this._printed.delete(id); this._render(); }
       else if (btn.dataset.act === "print") this._printLabel(entry);
+      else if (btn.dataset.act === "less" || btn.dataset.act === "more") {
+        const o = this._labelOpts(id);
+        o.portions = Math.max(1, Math.min(MAX_PORTIONS, o.portions + (btn.dataset.act === "more" ? 1 : -1)));
+        this._render();
+      } else if (btn.dataset.act === "where") { this._labelOpts(id).location = btn.dataset.loc; this._render(); }
     });
   }
 
@@ -311,6 +360,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     const busy = this._busy.has(id);
     const printing = this._printing.has(id);
     const printed = this._printed.get(id);
+    const labelOpen = this._labelOpen === id;
+    const opts = this._labelOpts(id);
     const img = this._imageUrl(r);
     const pic = img
       ? `<img class="pic" src="${esc(img)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'pic',innerHTML:'<ha-icon icon=&quot;mdi:silverware-fork-knife&quot;></ha-icon>'}))">`
@@ -327,8 +378,21 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         <button data-act="open" data-id="${id}"><ha-icon icon="mdi:open-in-new"></ha-icon>Open in Mealie</button>
         <button class="primary" data-act="made" data-id="${id}" ${done || busy ? "disabled" : ""}>
           <ha-icon icon="${done ? "mdi:check" : "mdi:pot-steam-outline"}"></ha-icon>${busy ? "Taking out…" : done ? "Made" : "Made it"}</button>
-        <button data-act="print" data-id="${id}" ${printing ? "disabled" : ""}>
-          <ha-icon icon="mdi:printer-outline"></ha-icon>${printing ? "Printing…" : "Print label"}</button>
+        <button data-act="label" data-id="${id}" class="${labelOpen ? "on" : ""}" aria-expanded="${labelOpen}">
+          <ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>
+      </div>` : ""}
+      ${open && labelOpen ? `<div class="label">
+        <div class="lrow"><span>Portions</span>
+          <div class="stepper">
+            <button data-act="less" data-id="${id}" ${opts.portions <= 1 || printing ? "disabled" : ""} aria-label="Fewer">−</button>
+            <b>${opts.portions}</b>
+            <button data-act="more" data-id="${id}" ${opts.portions >= MAX_PORTIONS || printing ? "disabled" : ""} aria-label="More">+</button>
+          </div></div>
+        <div class="lrow"><span>Goes in</span>
+          <div class="seg">${["freezer", "fridge"].map((loc) => `<button data-act="where" data-loc="${loc}" data-id="${id}"
+            class="${opts.location === loc ? "on" : ""}" ${printing ? "disabled" : ""}><ha-icon icon="${loc === "freezer" ? "mdi:snowflake" : "mdi:fridge"}"></ha-icon>${loc === "freezer" ? "Freezer" : "Fridge"}</button>`).join("")}</div></div>
+        <button class="print" data-act="print" data-id="${id}" ${printing ? "disabled" : ""}>
+          <ha-icon icon="mdi:printer"></ha-icon>${printing ? "Printing…" : `Print ${opts.portions} label${opts.portions === 1 ? "" : "s"}`}</button>
       </div>` : ""}
       ${printed ? `<div class="printed ${printed.bad ? "bad" : ""}">${esc(printed.text)}</div>` : ""}
     </div>`;

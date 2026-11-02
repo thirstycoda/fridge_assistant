@@ -249,9 +249,11 @@ A card for one day of a [Mealie](https://mealie.io) meal plan (read through
 Home Assistant's Mealie integration). It shows Breakfast, Lunch and Dinner,
 each only when something is planned, with every recipe's picture and name;
 plain notes are listed without a picture. Tap a meal for **Open in Mealie**
-(the recipe in a new tab or the browser) and **Made it**, which calls a script
+(the recipe in a new tab or the browser), **Made it**, which calls a script
 with `{mealplan_id, slug, name, entry_type, date}` — for example one that
-passes the recipe's ingredients to `fridge_assistant.consume_ingredients`.
+passes the recipe's ingredients to `fridge_assistant.consume_ingredients` —
+and **Print label**, which adds the cooked meal as a dish (in the fridge, or
+`label_location`) and prints its sticker for the container.
 A meal counts as made once `todo_entity` holds a line whose JSON description
 has its `mealplan_id` and a `done` record; it then shows a tick.
 
@@ -263,6 +265,7 @@ group: home                       # optional, Mealie group in recipe links
 todo_entity: todo.planned_meals   # optional
 script: script.cook_planned_meal  # optional
 mealie_entry: 01ABC...            # optional, the Mealie config entry
+label_location: fridge            # optional, where Print label puts the dish
 ```
 
 Pictures load straight from Mealie, so the browser has to reach `mealie_url`.

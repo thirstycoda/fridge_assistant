@@ -7,6 +7,8 @@
  * ingredients out of Fridge Assistant, and "Print label", which adds the
  * cooked meal to Fridge Assistant as a dish (choose how many portions, and
  * Freezer or Fridge) and prints a sticker for each portion. Meals already made show a tick.
+ * Loose ingredients on the plan (notes such as "Avocado") get an "Eaten"
+ * button that takes one of it out of Fridge Assistant.
  *
  *   type: custom:fridge-assistant-meal-plan-card
  *   day: 0                          # 0 = today, 1 = tomorrow, ...
@@ -35,6 +37,16 @@ const SECTION_OF = { breakfast: "breakfast", lunch: "lunch", dinner: "dinner", s
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
+
+function fmtAmount(amount, unit) {
+  const n = Number(amount) || 0;
+  const round = (x) => (x >= 10 || Number.isInteger(x) ? Math.round(x) : Math.round(x * 10) / 10);
+  if (unit === "g" && n >= 1000) return `${round(n / 1000)} kg`;
+  if (unit === "ml" && n >= 1000) return `${round(n / 1000)} l`;
+  if (unit === "g" || unit === "ml") return `${round(n)} ${unit}`;
+  if (!unit || unit === "each") return `${round(n)}`;
+  return `${round(n)} ${unit}${round(n) === 1 ? "" : "s"}`;
+}
 
 const pad = (n) => String(n).padStart(2, "0");
 const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -106,6 +118,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     this._printing = this._printing || new Set();
     this._printed = this._printed || new Map();
     this._labelState = this._labelState || new Map();
+    this._notes = this._notes || new Map();
     this._labelOpen = this._labelOpen || null;
     if (this.shadowRoot) this._render();
   }
@@ -175,6 +188,64 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
 
   _recipeUrl(recipe) {
     return `${this._config.mealie_url}/g/${encodeURIComponent(this._config.group)}/r/${encodeURIComponent(recipe.slug)}`;
+  }
+
+  /* A loose ingredient on the plan (a note such as "Avocado") was eaten: take
+   * one of it out of Fridge Assistant and record it on the to-do list so the
+   * card remembers. */
+  async _eaten(entry) {
+    const id = String(entry.mealplan_id);
+    const food = String(entry.title || "").trim();
+    if (!food || this._busy.has(id) || this._done.has(id)) return;
+    this._busy.add(id);
+    this._notes.delete(id);
+    this._render();
+    try {
+      const res = await this._hass.callWS({
+        type: "call_service", domain: "fridge_assistant", service: "consume_ingredients",
+        service_data: { ingredients: [{ food, quantity: 1, unit: "each" }] }, return_response: true,
+      });
+      const line = (res && res.response && res.response.lines && res.response.lines[0]) || {};
+      const name = line.template || food;
+      const unit = line.amount_unit;
+      if (line.status === "taken" || line.status === "short") {
+        const left = (line.taken || []).reduce((sum, t) => sum + (t.left || 0), 0);
+        const took = unit === "each" ? `1 ${name.toLowerCase()}` : `${fmtAmount(line.need, unit)} of ${name.toLowerCase()}`;
+        const rest = line.status === "short" ? " · that was the last of it"
+          : left > 0 ? ` · ${fmtAmount(left, unit)} left in that pack` : " · that pack is finished";
+        this._notes.set(id, { text: `Took ${took}${rest}` });
+        await this._recordDone(entry, { eaten: true, at: new Date().toISOString() });
+        this._done.set(id, { eaten: true });
+        this._open = null;
+      } else {
+        const why = {
+          untracked: `${food} isn't tracked in Fridge Assistant`,
+          not_in_stock: `There's no ${name.toLowerCase()} in Fridge Assistant`,
+          no_amount_tracked: `There's no ${name.toLowerCase()} in Fridge Assistant`,
+          no_conversion: `Fridge Assistant can't tell how much one ${name.toLowerCase()} is`,
+        }[line.status] || `Nothing taken (${line.status || "unknown"})`;
+        this._notes.set(id, { text: why, bad: true });
+      }
+    } catch (err) {
+      this._notes.set(id, { text: `Couldn't take it out: ${err.message || err}`, bad: true });
+    } finally {
+      this._busy.delete(id);
+      this._render();
+    }
+  }
+
+  async _recordDone(entry, done) {
+    const target = { entity_id: this._config.todo_entity };
+    const type = String(entry.entry_type || "meal");
+    const day = new Date(`${entry.mealplan_date}T12:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    const summary = `${type.charAt(0).toUpperCase()}${type.slice(1)}: ${entry.title} · ${day}`;
+    const description = JSON.stringify({
+      mealplan_id: entry.mealplan_id, name: entry.title, entry_type: entry.entry_type, date: entry.mealplan_date, done,
+    });
+    try {
+      await this._hass.callService("todo", "add_item", { item: summary, description }, target);
+      await this._hass.callService("todo", "update_item", { item: summary, status: "completed" }, target);
+    } catch (err) { /* the stock change already happened; remembering it is a nicety */ }
   }
 
   async _madeIt(entry) {
@@ -286,7 +357,6 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .meal { border-radius: 14px; background: var(--secondary-background-color); margin-top: 8px; overflow: hidden; }
         .meal-row { display: flex; align-items: center; gap: 12px; padding: 8px; width: 100%; text-align: left;
           font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
-        .meal-row.note { cursor: default; }
         .pic { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 10px; object-fit: cover;
           background: var(--divider-color); display: flex; align-items: center; justify-content: center; }
         .pic ha-icon { --mdc-icon-size: 28px; color: var(--secondary-text-color); }
@@ -337,6 +407,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       if (btn.dataset.act === "toggle") { this._open = this._open === id ? null : id; this._render(); }
       else if (btn.dataset.act === "open") window.open(this._recipeUrl(entry.recipe), "_blank", "noopener");
       else if (btn.dataset.act === "made") this._madeIt(entry);
+      else if (btn.dataset.act === "eaten") this._eaten(entry);
       else if (btn.dataset.act === "label") { this._labelOpen = this._labelOpen === id ? null : id; this._printed.delete(id); this._render(); }
       else if (btn.dataset.act === "print") this._printLabel(entry);
       else if (btn.dataset.act === "less" || btn.dataset.act === "more") {
@@ -350,13 +421,25 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
   _mealHtml(entry) {
     const id = String(entry.mealplan_id);
     const r = entry.recipe;
-    if (!r) {
-      return `<div class="meal"><div class="meal-row note">
-        <div class="pic"><ha-icon icon="mdi:food-apple-outline"></ha-icon></div>
-        <div class="name">${esc(entry.title || "")}${entry.description ? `<small>${esc(entry.description)}</small>` : ""}</div>
-      </div></div>`;
-    }
     const done = this._done.get(id);
+    if (!r) {
+      const busy = this._busy.has(id);
+      const open = this._open === id;
+      const note = this._notes.get(id);
+      const sub = done ? "Eaten" : entry.description || "";
+      return `<div class="meal note ${done ? "is-made" : ""}">
+        <button class="meal-row" data-act="toggle" data-id="${id}" aria-expanded="${open}">
+          <div class="pic"><ha-icon icon="mdi:food-apple-outline"></ha-icon></div>
+          <div class="name">${esc(entry.title || "")}${sub ? `<small>${esc(sub)}</small>` : ""}</div>
+          ${done ? `<ha-icon class="made" icon="mdi:check-circle"></ha-icon>` : ""}
+        </button>
+        ${open ? `<div class="actions">
+          <button class="primary" data-act="eaten" data-id="${id}" ${done || busy ? "disabled" : ""}>
+            <ha-icon icon="mdi:check"></ha-icon>${busy ? "Taking out…" : "Eaten"}</button>
+        </div>` : ""}
+        ${note ? `<div class="printed ${note.bad ? "bad" : ""}">${esc(note.text)}</div>` : ""}
+      </div>`;
+    }
     const busy = this._busy.has(id);
     const printing = this._printing.has(id);
     const printed = this._printed.get(id);
@@ -366,7 +449,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     const pic = img
       ? `<img class="pic" src="${esc(img)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'pic',innerHTML:'<ha-icon icon=&quot;mdi:silverware-fork-knife&quot;></ha-icon>'}))">`
       : `<div class="pic"><ha-icon icon="mdi:silverware-fork-knife"></ha-icon></div>`;
-    const status = done ? (done.skipped ? "Skipped" : "Made") : "";
+    const status = done ? (done.skipped ? "Skipped" : done.eaten ? "Eaten" : "Made") : "";
     const open = this._open === id;
     return `<div class="meal ${done ? "is-made" : ""}">
       <button class="meal-row" data-act="toggle" data-id="${id}" aria-expanded="${open}">

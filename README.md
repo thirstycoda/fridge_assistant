@@ -243,6 +243,30 @@ A line's description may hold JSON — `{"name": "<product title>", "qty": 2,
 "location": "auto", "ordered": "<original, for a substitute>"}`; otherwise
 the summary (`2 × Product`) is used. Live scanning needs HTTPS.
 
+## Meal plan card
+
+A card for one day of a [Mealie](https://mealie.io) meal plan (read through
+Home Assistant's Mealie integration). It shows Breakfast, Lunch and Dinner,
+each only when something is planned, with every recipe's picture and name;
+plain notes are listed without a picture. Tap a meal for **Open in Mealie**
+(the recipe in a new tab or the browser) and **Made it**, which calls a script
+with `{mealplan_id, slug, name, entry_type, date}` — for example one that
+passes the recipe's ingredients to `fridge_assistant.consume_ingredients`.
+A meal counts as made once `todo_entity` holds a line whose JSON description
+has its `mealplan_id` and a `done` record; it then shows a tick.
+
+```yaml
+type: custom:fridge-assistant-meal-plan-card
+day: 0                            # 0 = today, 1 = tomorrow, ...
+mealie_url: http://mealie.local:9000
+group: home                       # optional, Mealie group in recipe links
+todo_entity: todo.planned_meals   # optional
+script: script.cook_planned_meal  # optional
+mealie_entry: 01ABC...            # optional, the Mealie config entry
+```
+
+Pictures load straight from Mealie, so the browser has to reach `mealie_url`.
+
 ## Amounts and recipe ingredients
 
 An ingredient template can say how its stock is counted, so items know how

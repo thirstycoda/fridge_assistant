@@ -133,10 +133,11 @@ async def _async_register_static(hass: HomeAssistant) -> None:
             StaticPathConfig(f"{URL_BASE}/fonts", str(panel_dir / "fonts"), True),
         ]
     )
-    # Dashboard cards (e.g. the unpack card) ship with the integration, so
+    # Dashboard cards (the unpack and meal plan cards) ship with the integration, so
     # load them on every dashboard without a manual resource entry.
     version = (await async_get_integration(hass, DOMAIN)).version
     frontend.add_extra_js_url(hass, f"{URL_BASE}/panel/unpack-card.js?v={version}")
+    frontend.add_extra_js_url(hass, f"{URL_BASE}/panel/meal-plan-card.js?v={version}")
     hass.data[DOMAIN][_STATIC_REGISTERED] = True
 
 

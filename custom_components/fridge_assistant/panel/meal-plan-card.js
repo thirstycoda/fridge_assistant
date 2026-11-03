@@ -701,63 +701,8 @@ function checkText(g) {
   return parts.length ? `Worth a look: ${parts.join(" · ")}` : "";
 }
 
-/* Supermarket-style aisles, in the order you'd walk them, from Mealie's food
- * labels (else Fridge Assistant's category). */
-const AISLES = [
-  { key: "fruit", name: "Fruit", emoji: "🍎", color: "#e57373",
-    labels: ["Fruits", "Berries"], categories: ["fruit"] },
-  { key: "veg", name: "Vegetables", emoji: "🥦", color: "#66bb6a",
-    labels: ["Vegetables & Greens", "Mushrooms"], categories: ["vegetables"] },
-  { key: "chilled", name: "Chilled & plant-based", emoji: "🧊", color: "#4fc3f7",
-    labels: ["Dairy-Free & Meat Substitutes", "Dairy & Eggs", "Cheese"], categories: ["dairy", "eggs"] },
-  { key: "bakery", name: "Bakery", emoji: "🍞", color: "#d7a86e",
-    labels: ["Bread & Salty Snacks", "Bread & Salty Snackssta", "Pre-Made Doughs & Wrappers"], categories: ["bread_bakery"] },
-  { key: "grains", name: "Pasta, rice & grains", emoji: "🍝", color: "#ffca28",
-    labels: ["Pasta", "Grains & Cereals"], categories: ["breakfast"] },
-  { key: "beans", name: "Beans & lentils", emoji: "🫘", color: "#a1887f", labels: ["Legumes"], categories: [] },
-  { key: "tins", name: "Tins & jars", emoji: "🥫", color: "#ef6c00",
-    labels: ["Canned Food", "Soups, Stews & stock"], categories: [] },
-  { key: "sauces", name: "Sauces, oils & vinegars", emoji: "🫙", color: "#8d6e63",
-    labels: ["Condiments", "Sauces, Spreads & dip", "Dressings & Vinegars", "Oils & Fats", "Wine, Beer & Spirits"], categories: [] },
-  { key: "spices", name: "Herbs & spices", emoji: "🌿", color: "#9ccc65",
-    labels: ["Herbs & Spices", "Seasonings & Spice Blends"], categories: ["sauces_spices"] },
-  { key: "nuts", name: "Nuts & seeds", emoji: "🥜", color: "#bcaaa4", labels: ["Nuts & Seeds"], categories: [] },
-  { key: "baking", name: "Baking & sweeteners", emoji: "🧁", color: "#f48fb1",
-    labels: ["Baking", "Sugar & Sweeteners", "Desserts & Sweet Snacks", "Supplements & Extracts"], categories: ["snack"] },
-  { key: "frozen", name: "Frozen", emoji: "❄️", color: "#90caf9", labels: [], categories: [] },
-  { key: "drinks", name: "Drinks", emoji: "🥤", color: "#7986cb", labels: ["Beverages"], categories: ["drinks"] },
-  { key: "other", name: "Other", emoji: "🛒", color: "#9e9e9e", labels: [], categories: [] },
-];
-const AISLE_BY_LABEL = new Map(AISLES.flatMap((a) => a.labels.map((l) => [l.toLowerCase(), a])));
-const AISLE_BY_CATEGORY = new Map(AISLES.flatMap((a) => a.categories.map((c) => [c, a])));
-/* An emoji for a food by its name, when it has no photo or emoji of its own. */
-const FOOD_EMOJI = [
-  [/salt/, "🧂"], [/garlic/, "🧄"], [/spring onion|leek/, "🌱"], [/onion|shallot/, "🧅"], [/carrot/, "🥕"],
-  [/sweet potato/, "🍠"], [/potato/, "🥔"], [/tomato|passata/, "🍅"], [/chilli|jalape|harissa|sriracha|gochujang/, "🌶️"],
-  [/pepper(?!corn)/, "🫑"], [/aubergine|eggplant/, "🍆"], [/cucumber|courgette/, "🥒"], [/broccoli|gai lan|tenderstem/, "🥦"],
-  [/sweetcorn|corn|polenta/, "🌽"], [/mushroom|shiitake/, "🍄"], [/avocado/, "🥑"], [/spinach|kale|cabbage|lettuce|rocket|pak choi|chard/, "🥬"],
-  [/lemon/, "🍋"], [/lime/, "🍋‍🟩"], [/banana/, "🍌"], [/apple/, "🍎"], [/pear/, "🍐"], [/mango/, "🥭"], [/pineapple/, "🍍"],
-  [/kiwi/, "🥝"], [/blueberr|raspberr|strawberr|berry/, "🫐"], [/grape/, "🍇"], [/coconut/, "🥥"], [/date/, "🌴"],
-  [/ginger/, "🫚"], [/pea\b|peas|edamame|green bean|mangetout/, "🫛"], [/bean|lentil|chickpea|split pea/, "🫘"],
-  [/rice/, "🍚"], [/noodle|ramen|udon|soba/, "🍜"], [/pasta|spaghetti|macaroni|fusilli|lasagne|orzo/, "🍝"],
-  [/bread|ciabatta|roll|wrap|tortilla|pastry|breadcrumb|panko/, "🍞"], [/flour|baking/, "🌾"], [/oat|cereal|quinoa|freekeh|grain/, "🌾"],
-  [/peanut|cashew|almond|walnut|hazelnut|nut|seed|tahini/, "🥜"], [/milk|cream|yoghurt|yogurt/, "🥛"],
-  [/cheese/, "🧀"], [/butter/, "🧈"], [/egg/, "🥚"], [/tofu|tempeh|seitan|soy curl/, "🧊"], [/oil/, "🫒"],
-  [/vinegar|soy sauce|sauce|ketchup|mustard|mayo/, "🫙"], [/sugar|syrup|honey|agave/, "🍯"], [/vanilla|chocolate|cocoa/, "🍫"],
-  [/wine|mirin|sake/, "🍶"], [/stock|bouillon|dashi|miso/, "🥣"], [/water/, "💧"],
-  [/basil|oregano|thyme|parsley|rosemary|sage|mint|coriander|dill|chive|bay leaf|herb/, "🌿"],
-];
-function foodEmoji(name) {
-  const low = String(name || "").toLowerCase();
-  const hit = FOOD_EMOJI.find(([re]) => re.test(low));
-  return hit ? hit[1] : null;
-}
-
-function aisleOf(g) {
-  return (g.label && AISLE_BY_LABEL.get(String(g.label).toLowerCase()))
-    || (g.category && AISLE_BY_CATEGORY.get(g.category))
-    || AISLES[AISLES.length - 1];
-}
+// Aisles and food emoji, shared with the unpack card (same version as this file).
+const { AISLES, aisleOf, foodEmoji } = await import(new URL(`./lib/food-look.js${new URL(import.meta.url).search}`, import.meta.url));
 
 function amountText(quantity, unit) {
   if (!quantity) return "";
@@ -782,6 +727,11 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     this._recipes = this._recipes || new Map();
     this._form = this._form || null;
     this._notice = this._notice || null;
+    if (!this._collapsed) {
+      // Which sections are folded away, remembered on this device.
+      try { this._collapsed = new Set(JSON.parse(localStorage.getItem("fridge-assistant-shopping-collapsed") || "[]")); }
+      catch (e) { this._collapsed = new Set(); }
+    }
     if (this.shadowRoot) this._render();
   }
 
@@ -1044,9 +994,12 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; padding: 6px; }
         .sec { margin-top: 20px; }
         .sec-h { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; margin-bottom: 4px;
-          padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+          padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 14%, transparent);
+          width: 100%; border: none; font-family: inherit; color: var(--primary-text-color); cursor: pointer; text-align: left; }
+        .sec-h .chev { --mdc-icon-size: 20px; color: var(--secondary-text-color); transition: transform .2s; }
+        .sec.shut .sec-h .chev { transform: rotate(-90deg); }
         .sec-h ha-icon { --mdc-icon-size: 20px; color: var(--accent); }
-        .sec-h .count { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--accent);
+        .sec-h .count { margin-left: auto; margin-right: -2px; font-size: 13px; font-weight: 600; color: var(--accent);
           background: var(--card-background-color); border-radius: 999px; padding: 1px 9px; }
         .sec.need { --accent: var(--primary-color); }
         .sec.check { --accent: var(--warning-color, #e69500); }
@@ -1127,6 +1080,13 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       const btn = ev.target.closest("[data-act]");
       if (!btn) return;
       if (btn.dataset.act === "refresh") { this._load(true); return; }
+      if (btn.dataset.act === "sec") {
+        const key = btn.dataset.sec;
+        if (this._collapsed.has(key)) this._collapsed.delete(key); else this._collapsed.add(key);
+        try { localStorage.setItem("fridge-assistant-shopping-collapsed", JSON.stringify([...this._collapsed])); } catch (e) { /* fine */ }
+        this._render();
+        return;
+      }
       if (btn.dataset.act === "prev" || btn.dataset.act === "next") {
         this._offset += btn.dataset.act === "next" ? 1 : -1;
         this._groups = null; this._open = null;
@@ -1256,10 +1216,15 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         ${these.map((r) => this._rowHtml(key, r)).join("")}</div>` : "";
     }).join("");
     const ICONS = { need: "mdi:cart-outline", check: "mdi:magnify", have: "mdi:check-circle-outline", added: "mdi:basket-check-outline" };
-    const section = (key, label, rows, empty) => `<div class="sec ${key}">
-      <div class="sec-h"><ha-icon icon="${ICONS[key]}"></ha-icon><b>${label}</b><span class="count">${rows.length}</span></div>
-      ${rows.length ? byAisle(key, rows) : `<div class="empty">${empty}</div>`}
+    const section = (key, label, rows, empty) => {
+      const shut = this._collapsed.has(key);
+      return `<div class="sec ${key}${shut ? " shut" : ""}">
+      <button class="sec-h" data-act="sec" data-sec="${key}" aria-expanded="${!shut}">
+        <ha-icon icon="${ICONS[key]}"></ha-icon><b>${label}</b><span class="count">${rows.length}</span>
+        <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon></button>
+      ${shut ? "" : rows.length ? byAisle(key, rows) : `<div class="empty">${empty}</div>`}
     </div>`;
+    };
     const toGet = need.length + added.length;
     const progress = toGet ? `<div class="progress"><div class="bar"><span style="width:${Math.round(added.length / toGet * 100)}%"></span></div>
       <div class="ptext">${added.length} of ${toGet} in the basket${check.length ? ` · ${check.length} to check` : ""}</div></div>` : "";

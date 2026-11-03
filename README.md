@@ -245,6 +245,10 @@ product's or line's name (`400g`, `4 x 400g`, `4 Jacket Potatoes`) or the
 food's usual pack size. Change it (in the food's unit or a sensible other one —
 `4` each potatoes are kept as grams) when it's wrong.
 
+Open lines are grouped into the same supermarket aisles as the shopping list
+(from the matched food's category, else its name), each with the food's
+emoji; the Put away section folds away.
+
 A line's description may hold JSON — `{"name": "<product title>", "qty": 2,
 "location": "auto", "ordered": "<original, for a substitute>"}`; otherwise
 the summary (`2 × Product`) is used. Live scanning needs HTTPS.
@@ -296,7 +300,7 @@ Recipes that need tidying in Mealie (lines it couldn't read) are listed at
 the top. Within each section ingredients are grouped into supermarket aisles
 (from Mealie's food labels, else Fridge Assistant's category) with a
 thumbnail: the product photo from the last pack scanned, else the food's
-emoji. A bar shows how much of the shop is in the basket. Ingredients are summed per ingredient template in its unit, so two
+emoji. A bar shows how much of the shop is in the basket. Each section heading folds its section away (remembered on the device). Ingredients are summed per ingredient template in its unit, so two
 recipes needing a pepper each with one in stock show 1 under Need and 1
 under Have. Tap an ingredient for the meals it's for and **Added** / **Have**
 buttons. Meals already made are left out, and loose ingredients on the plan

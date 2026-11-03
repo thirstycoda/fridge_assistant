@@ -31,6 +31,9 @@
  * "delivery_window" attribute ("20:00 - 21:00") gives the end.
  */
 
+// Aisles and food emoji, shared with the shopping list (same version as this file).
+const { AISLES, aisleOf, foodEmoji } = await import(new URL(`./lib/food-look.js${new URL(import.meta.url).search}`, import.meta.url));
+
 const LOCATIONS = [
   { key: "cupboard", label: "Cupboard", icon: "mdi:cupboard-outline" },
   { key: "fridge", label: "Fridge", icon: "mdi:fridge" },
@@ -580,7 +583,13 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         .loc.sug { border: 2px solid var(--primary-color); }
         .loc small { font-weight: 400; color: var(--primary-color); font-size: 12px; min-height: 1em; }
         .cancel { margin-top: 10px; background: none; border: none; color: var(--secondary-text-color); padding: 4px 0; }
-        .list { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+        .list { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+        .aisle-h { display: flex; align-items: center; gap: 6px; margin-top: 16px; font-size: 12px; font-weight: 600;
+          text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); padding: 0 2px 4px;
+          border-bottom: 2px solid color-mix(in srgb, var(--tint) 45%, transparent); }
+        .cnt { margin-left: auto; font-weight: 600; font-size: 12px; color: var(--secondary-text-color); }
+        .th { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; display: flex; align-items: center;
+          justify-content: center; font-size: 19px; background: color-mix(in srgb, var(--tint) 20%, transparent); }
         .row { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; padding: 10px 12px; }
         .row.on { border-color: var(--primary-color); background: var(--secondary-background-color); }
         .row .n { flex: 1 1 auto; }
@@ -600,8 +609,13 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         .placed div { display: flex; align-items: center; gap: 8px; }
         .placed span { flex: 1 1 auto; }
         .placed button { padding: 4px 12px; font-size: 14px; }
-        .heading { margin-top: 16px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
-          color: var(--secondary-text-color); }
+        .heading { margin-top: 22px; display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px;
+          border-radius: 12px; border: none; font: inherit; font-size: 16px; font-weight: 600; text-align: left; cursor: pointer;
+          color: var(--primary-text-color); background: color-mix(in srgb, var(--success-color, #43a047) 14%, transparent); }
+        .heading ha-icon { --mdc-icon-size: 20px; color: var(--success-color, #43a047); }
+        .heading .cnt { font-size: 13px; color: var(--success-color, #43a047); }
+        .heading .chev { color: var(--secondary-text-color); transition: transform .2s; }
+        .heading .chev.shut { transform: rotate(-90deg); }
       </style>
       <ha-card>
         <div class="head" id="head"></div>
@@ -643,6 +657,11 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     } else if (act === "loc") this._place(el.dataset.loc);
     else if (act === "undo" && this._sel && this._sel.line) this._undo(this._sel.line, Number(el.dataset.i));
     else if (act === "cancel") { this._sel = null; this._status(""); this._renderSel(); this._renderList(); }
+    else if (act === "donetoggle") {
+      this._doneShut = !this._doneShut;
+      try { localStorage.setItem("fridge-assistant-unpack-done-shut", this._doneShut ? "1" : "0"); } catch (e) { /* fine */ }
+      this._renderList();
+    }
     else if (act === "minus" && this._sel) { this._sel.qty = Math.max(1, this._sel.qty - 1); this._syncAmount(this._sel); this._renderSel(); }
     else if (act === "plus" && this._sel) {
       const max = this._sel.line ? this._sel.line.qty : 99;
@@ -789,11 +808,30 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       const m = this._cachedMatch(l.name);
       chip = LOCATION_LABEL[fixed || (m && m.location) || ""] || "";
     }
+    const look = this._look(l);
     return `<button class="row${l.qty <= 0 ? " done" : ""}${l.uid === selUid ? " on" : ""}" data-act="line" data-uid="${esc(l.uid)}">
-      ${l.qty <= 0 ? `<ha-icon class="tick" icon="mdi:check-circle"></ha-icon>` : ""}
+      <span class="th" style="--tint:${look.aisle.color}">${esc(look.emoji)}</span>
       <span class="n">${esc(l.summary)}</span>
+      ${l.qty <= 0 ? `<ha-icon class="tick" icon="mdi:check-circle"></ha-icon>` : ""}
       <span class="chip">${esc(chip)}</span>
     </button>`;
+  }
+
+  /* Which aisle a line belongs in and its emoji, from the matched food. */
+  _look(l) {
+    const m = this._cachedMatch(l.name);
+    const tpl = m && m.template;
+    const aisle = aisleOf({ category: tpl && tpl.category, name: (tpl && tpl.name) || l.name });
+    const own = tpl && tpl.emoji && tpl.emoji !== "🍽️" ? tpl.emoji : null;
+    return { aisle, emoji: own || foodEmoji(l.name) || foodEmoji(tpl && tpl.name) || aisle.emoji };
+  }
+
+  _grouped(lines, selUid) {
+    return AISLES.map((a) => {
+      const these = lines.filter((l) => this._look(l).aisle === a);
+      return these.length ? `<div class="aisle-h" style="--tint:${a.color}"><span>${a.emoji}</span>${esc(a.name)}<span class="cnt">${these.length}</span></div>
+        <div class="list">${these.map((l) => this._rowHtml(l, selUid)).join("")}</div>` : "";
+    }).join("");
   }
 
   _renderList() {
@@ -807,10 +845,15 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     }
     const selUid = this._sel && this._sel.line && this._sel.line.uid;
     const done = this._all.filter((l) => l.qty <= 0);
+    if (this._doneShut == null) {
+      try { this._doneShut = localStorage.getItem("fridge-assistant-unpack-done-shut") === "1"; } catch (e) { this._doneShut = false; }
+    }
     box.innerHTML = `
-      ${this._lines.length ? `<div class="list">${this._lines.map((l) => this._rowHtml(l, selUid)).join("")}</div>` : ""}
-      ${done.length ? `<div class="heading">Put away (${done.length})</div>
-        <div class="list">${done.map((l) => this._rowHtml(l, selUid)).join("")}</div>` : ""}`;
+      ${this._lines.length ? this._grouped(this._lines, selUid) : ""}
+      ${done.length ? `<button class="heading" data-act="donetoggle" aria-expanded="${!this._doneShut}">
+          <ha-icon icon="mdi:check-circle-outline"></ha-icon>Put away<span class="cnt">${done.length}</span>
+          <ha-icon class="chev${this._doneShut ? " shut" : ""}" icon="mdi:chevron-down"></ha-icon></button>
+        ${this._doneShut ? "" : `<div class="list">${done.map((l) => this._rowHtml(l, selUid)).join("")}</div>`}` : ""}`;
   }
 }
 

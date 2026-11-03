@@ -719,8 +719,8 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       <div class="title">${esc(this._config.title)}
         <div class="sub">${sub}</div>
       </div>
-      <button class="primary" data-act="scan"><ha-icon icon="${this._cam ? "mdi:close" : "mdi:barcode-scan"}"></ha-icon>
-        ${this._cam ? "Stop" : "Scan"}</button>
+      <button class="primary" data-act="scan" title="${this._cam ? "Stop scanning" : "Scan a barcode"}"
+        aria-label="${this._cam ? "Stop scanning" : "Scan a barcode"}"><ha-icon icon="${this._cam ? "mdi:close" : "mdi:barcode-scan"}"></ha-icon></button>
       <button data-act="type" title="Type a barcode"><ha-icon icon="mdi:keyboard-outline"></ha-icon></button>
       ${this._countdownHtml()}`;
   }

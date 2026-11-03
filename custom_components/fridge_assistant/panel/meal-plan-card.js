@@ -172,6 +172,7 @@ function scheduleRefresh(fn) {
 function dayLabel(offset, date) {
   if (offset === 0) return "Today";
   if (offset === 1) return "Tomorrow";
+  if (offset === -1) return "Yesterday";
   return date.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
 }
 
@@ -207,9 +208,14 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
 
   getCardSize() { return 4; }
 
+
   getGridOptions() { return { columns: 12, min_columns: 6 }; }
 
+  /* Inside the week card (config `date`), the plan is handed over. */
+  set plan(plan) { this._plan = plan; this._error = null; if (this.shadowRoot) this._render(); }
+
   connectedCallback() {
+    if (this._config && this._config.date) { if (this._hass) this._subscribe(); return; }
     this._onPlan = (plan) => { this._plan = plan; this._error = null; this._render(); };
     planListeners.add(this._onPlan);
     if (this._hass) { this._load(); this._subscribe(); }
@@ -218,7 +224,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
   }
 
   disconnectedCallback() {
-    planListeners.delete(this._onPlan);
+    if (this._onPlan) planListeners.delete(this._onPlan);
     if (this._tick) { this._tick(); this._tick = null; }
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
   }
@@ -226,7 +232,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
   // ---- data -------------------------------------------------------------------
 
   _load(force = false) {
-    if (!this._hass || !this._config) return;
+    if (!this._hass || !this._config || this._config.date) return;
     fetchPlan(this._hass, this._config.mealie_entry, force)
       .then((plan) => { this._plan = plan; this._error = null; this._render(); })
       .catch((err) => { this._error = err.message || String(err); this._render(); });
@@ -249,7 +255,15 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       .catch(() => { this._unsub = null; return null; });
   }
 
-  _date() { return addDays(new Date(), Number(this._config.day) || 0); }
+  _date() {
+    return this._config.date ? new Date(`${this._config.date}T12:00:00`) : addDays(new Date(), Number(this._config.day) || 0);
+  }
+
+  _offset() {
+    if (!this._config.date) return Number(this._config.day) || 0;
+    const today = new Date(); today.setHours(12, 0, 0, 0);
+    return Math.round((this._date() - today) / 86400000);
+  }
 
   _entries() {
     const day = isoDate(this._date());
@@ -595,9 +609,10 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
   _render() {
     if (!this.shadowRoot || !this._config) return;
     const body = this.shadowRoot.getElementById("body");
-    const offset = Number(this._config.day) || 0;
+    const offset = this._offset();
     const date = this._date();
     const entries = this._entries();
+    this.classList.toggle("past", offset < 0);
     // Notes that aren't a meal slot (e.g. a side note for one person) go below.
     const extras = entries.filter((e) => !e.recipe && !["breakfast", "lunch", "dinner"].includes(e.entry_type));
     const meals = entries.filter((e) => !extras.includes(e));
@@ -606,7 +621,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     // Recipes before plain notes within a section.
     sections.forEach((s) => s.items.sort((a, b) => (b.recipe ? 1 : 0) - (a.recipe ? 1 : 0)));
     const head = `<div class="day">${esc(dayLabel(offset, date))}</div>
-      ${offset <= 1 ? `<div class="date">${esc(date.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</div>` : ""}`;
+      ${Math.abs(offset) <= 1 ? `<div class="date">${esc(date.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</div>` : ""}`;
     let content;
     if (this._plan === null && !this._error) content = `<div class="empty">Loading…</div>`;
     else if (!sections.length && !extras.length) content = `<div class="empty">Nothing planned.</div>`;
@@ -1500,5 +1515,193 @@ if (!customElements.get("fridge-assistant-use-up-card")) {
     type: "fridge-assistant-use-up-card",
     name: "Fridge Assistant use it up",
     description: "What to use soon from Fridge Assistant, with the Mealie recipes that use it.",
+  });
+}
+
+/* ---- Week plan card -----------------------------------------------------------
+ *
+ * The plan tab in one card: a week of the Mealie meal plan (weeks start on
+ * `week_start`), one day card each, with arrows to the weeks before and
+ * after. A week with nothing planned shows the Use it up suggestions instead
+ * (what's going off, opened, leftovers in the freezer, and recipes that use
+ * them); a planned week has them a tap away at the bottom.
+ *
+ *   type: custom:fridge-assistant-week-plan-card
+ *   mealie_url: https://mealie.example
+ *   mealie_entry: 01ABC...
+ *   week_start: saturday
+ *   todo_entity: todo.planned_meals
+ *   script: script.cook_planned_meal
+ *   days: 10                 # Use it up: "going off soon" window
+ */
+
+class FridgeAssistantWeekPlanCard extends HTMLElement {
+  static getStubConfig() { return { mealie_url: "http://mealie.local:9000", week_start: "saturday" }; }
+
+  setConfig(config) {
+    if (!config || !config.mealie_url) throw new Error("Set mealie_url (e.g. http://192.168.1.10:9925)");
+    this._config = { week_start: "saturday", group: "home", todo_entity: "todo.planned_meals",
+      script: "script.cook_planned_meal", days: 10, ...config };
+    this._offset = this._offset || 0;
+    this._days = this._days || new Map();
+    if (this.shadowRoot) this._render();
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (!this.shadowRoot) this._build();
+    for (const card of this._days.values()) card.hass = hass;
+    if (this._useUp) this._useUp.hass = hass;
+    if (first) this._load();
+  }
+
+  getCardSize() { return 12; }
+
+  connectedCallback() {
+    if (this._hass) this._load();
+    if (!this._tick) this._tick = scheduleRefresh(() => this._load());
+  }
+
+  disconnectedCallback() {
+    if (this._tick) { this._tick(); this._tick = null; }
+  }
+
+  _week() {
+    // This week (the one today is in), moved by the arrows.
+    const w = shoppingWeek(this._config.week_start, this._config.week_start, this._offset);
+    return w;
+  }
+
+  async _load() {
+    if (!this._hass) return;
+    const w = this._week();
+    const key = `${isoDate(w.start)}|${this._offset}`;
+    try {
+      const plan = await fetchPlanRange(this._hass, this._config.mealie_entry, isoDate(w.start), isoDate(w.end));
+      if (key !== `${isoDate(this._week().start)}|${this._offset}`) return;   // moved on meanwhile
+      this._plan = plan;
+      this._error = null;
+    } catch (err) {
+      this._error = err.message || String(err);
+    }
+    this._render();
+  }
+
+  _build() {
+    const root = this.attachShadow({ mode: "open" });
+    root.innerHTML = `
+      <style>
+        :host { display: block; }
+        .bar { display: flex; align-items: center; gap: 6px; padding: 4px 4px 12px; }
+        .bar .t { flex: 1 1 auto; }
+        .bar .w { font-size: 22px; font-weight: 600; }
+        .bar .d { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }
+        .bar button { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 12px;
+          color: var(--primary-text-color); cursor: pointer; padding: 6px 10px; font: inherit; display: flex; align-items: center; gap: 4px; }
+        .bar button ha-icon { --mdc-icon-size: 22px; }
+        .days { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+        .days > .past { opacity: .6; }
+        .empty { padding: 4px 4px 12px; color: var(--secondary-text-color); }
+        .more { margin-top: 16px; }
+        .more > button { width: 100%; padding: 12px; border-radius: 12px; border: 1px dashed var(--divider-color);
+          background: none; color: var(--primary-text-color); font: inherit; font-weight: 500; cursor: pointer;
+          display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .more ha-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
+        .useup { margin-top: 12px; }
+        .err { color: var(--error-color); padding: 8px 4px; }
+      </style>
+      <div class="bar" id="bar"></div>
+      <div id="msg"></div>
+      <div class="days" id="days"></div>
+      <div class="more" id="more"></div>
+      <div class="useup" id="useup"></div>`;
+    root.getElementById("bar").addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-act]");
+      if (!b) return;
+      this._offset = b.dataset.act === "today" ? 0 : this._offset + (b.dataset.act === "next" ? 1 : -1);
+      this._plan = null;
+      this._showIdeas = false;
+      this._render();
+      this._load();
+    });
+    root.getElementById("more").addEventListener("click", (ev) => {
+      if (!ev.target.closest("[data-act=ideas]")) return;
+      this._showIdeas = !this._showIdeas;
+      this._render();
+    });
+  }
+
+  _dayCard(dateIso) {
+    if (!this._days.has(dateIso)) {
+      const card = document.createElement("fridge-assistant-meal-plan-card");
+      card.setConfig({
+        date: dateIso, mealie_url: this._config.mealie_url, group: this._config.group,
+        mealie_entry: this._config.mealie_entry, todo_entity: this._config.todo_entity,
+        script: this._config.script, label_location: this._config.label_location,
+      });
+      if (this._hass) card.hass = this._hass;
+      this._days.set(dateIso, card);
+    }
+    return this._days.get(dateIso);
+  }
+
+  _render() {
+    if (!this.shadowRoot) return;
+    const root = this.shadowRoot;
+    const w = this._week();
+    const fmt = (d) => d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    const name = this._offset === 0 ? "This week" : this._offset === 1 ? "Next week"
+      : this._offset === -1 ? "Last week" : this._offset > 0 ? `In ${this._offset} weeks` : `${-this._offset} weeks ago`;
+    root.getElementById("bar").innerHTML = `
+      <button data-act="prev" title="Week before"><ha-icon icon="mdi:chevron-left"></ha-icon></button>
+      <div class="t"><div class="w">${esc(name)}</div><div class="d">${esc(fmt(w.start))} – ${esc(fmt(w.end))}</div></div>
+      ${this._offset !== 0 ? `<button data-act="today">This week</button>` : ""}
+      <button data-act="next" title="Week after"><ha-icon icon="mdi:chevron-right"></ha-icon></button>`;
+    const days = root.getElementById("days");
+    const msg = root.getElementById("msg");
+    const more = root.getElementById("more");
+    const useup = root.getElementById("useup");
+    if (this._error) { msg.innerHTML = `<div class="err">${esc(this._error)}</div>`; return; }
+    if (this._plan == null) { msg.innerHTML = `<div class="empty">Loading…</div>`; days.replaceChildren(); more.innerHTML = ""; return; }
+    const planned = this._plan.length > 0;
+    msg.innerHTML = planned ? "" : `<div class="empty">Nothing planned for this week yet. Here's what could do with using up, and recipes that use it.</div>`;
+    // Day cards, reused while the week stays the same.
+    const dates = Array.from({ length: 7 }, (_, i) => isoDate(addDays(w.start, i)));
+    for (const key of [...this._days.keys()]) if (!dates.includes(key)) this._days.delete(key);
+    if (planned) {
+      const cards = dates.map((d) => {
+        const c = this._dayCard(d);
+        c.plan = this._plan;
+        return c;
+      });
+      days.replaceChildren(...cards);
+    } else {
+      days.replaceChildren();
+    }
+    const showIdeas = !planned || this._showIdeas;
+    more.innerHTML = planned ? `<button data-act="ideas"><ha-icon icon="${this._showIdeas ? "mdi:chevron-up" : "mdi:lightbulb-on-outline"}"></ha-icon>
+      ${this._showIdeas ? "Hide ideas" : "Ideas: what to use up, and leftovers in the freezer"}</button>` : "";
+    if (showIdeas) {
+      if (!this._useUp) {
+        this._useUp = document.createElement("fridge-assistant-use-up-card");
+        this._useUp.setConfig({ mealie_url: this._config.mealie_url, mealie_entry: this._config.mealie_entry,
+          group: this._config.group, days: this._config.days, title: "Use it up" });
+        if (this._hass) this._useUp.hass = this._hass;
+      }
+      if (useup.firstChild !== this._useUp) useup.replaceChildren(this._useUp);
+    } else {
+      useup.replaceChildren();
+    }
+  }
+}
+
+if (!customElements.get("fridge-assistant-week-plan-card")) {
+  customElements.define("fridge-assistant-week-plan-card", FridgeAssistantWeekPlanCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "fridge-assistant-week-plan-card",
+    name: "Fridge Assistant week plan",
+    description: "A week of the Mealie meal plan by day, with use-it-up ideas when nothing's planned.",
   });
 }

@@ -342,6 +342,23 @@ mealie_entry: 01ABC...   # optional
 days: 10                 # optional
 ```
 
+## Week plan card
+
+The plan tab in one card: the week's Mealie plan with a day card for each day
+(past days dimmed), arrows to the weeks before and after, and a button back to
+this week. A week with nothing planned shows the Use it up suggestions instead;
+a planned week has them a tap away at the bottom.
+
+```yaml
+type: custom:fridge-assistant-week-plan-card
+mealie_url: https://mealie.example
+mealie_entry: 01ABC...   # optional
+week_start: saturday     # optional
+todo_entity: todo.planned_meals
+script: script.cook_planned_meal
+days: 10                 # optional, for Use it up
+```
+
 ## Amounts and recipe ingredients
 
 An ingredient template can say how its stock is counted, so items know how

@@ -577,6 +577,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         .qty button { padding: 4px 14px; font-size: 18px; }
         .amt { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
         .amt label { flex: 1 1 auto; color: var(--secondary-text-color); font-size: 14px; }
+        .amt label small { display: block; font-size: 12px; }
         .amt input { width: 90px; font: inherit; padding: 8px 10px; border-radius: 10px; text-align: right;
           border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
         .amt select { margin-top: 0; }
@@ -790,7 +791,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         </div>` : ""}
       ${open && sel.units ? `
         <div class="amt">
-          <label for="amt">How much</label>
+          <label for="amt">${sel.qty > 1 ? `How much in total <small>(${sel.qty} packs)</small>` : "How much"}</label>
           <input id="amt" type="number" inputmode="decimal" min="0" step="any" value="${esc(sel.amount || "")}" placeholder="?">
           <select id="amtunit" aria-label="Unit">${sel.units.map((u) =>
             `<option value="${esc(u)}"${u === sel.amountUnit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>

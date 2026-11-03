@@ -345,8 +345,11 @@ days: 10                 # optional
 ## Week plan card
 
 The plan tab in one card: the week's Mealie plan with a day card for each day
-(past days dimmed) and the same week arrows as the shopping list. A week with nothing planned shows the Use it up suggestions instead;
-a planned week has them a tap away at the bottom.
+(past days dimmed) and the same week arrows as the shopping list. Weeks are
+named from the calendar week you're in (Last week, This week, Next week). A week
+with nothing planned shows the Use it up suggestions instead; a planned week has
+them a tap away at the bottom. Plan in Mealie opens Mealie's planner on the same
+week, for adding and moving meals.
 
 ```yaml
 type: custom:fridge-assistant-week-plan-card

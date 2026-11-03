@@ -782,6 +782,7 @@ _LINE_SCHEMA = vol.Schema(
         vol.Optional("source"): vol.Any(None, str),
         vol.Optional("date"): vol.Any(None, str),
         vol.Optional("label"): vol.Any(None, str),
+        vol.Optional("reserved"): bool,
     },
     extra=vol.REMOVE_EXTRA,
 )

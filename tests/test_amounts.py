@@ -243,6 +243,32 @@ class TestStockCheck(unittest.TestCase):
         self.assertEqual((g["need"], g["stock"], g["have"], g["short"]), (2, 1, 1, 1))
         self.assertEqual([s["source"] for s in g["sources"]], ["Fajitas", "Paella"])
 
+    def test_reserved_lines_claim_stock_first(self):
+        # One pepper in the fridge, Friday's meal needs it: Saturday's has to buy one.
+        self.add("Romano pepper", quantity="1", amount=1)
+        g = self.groups([
+            {"food": "romano pepper", "quantity": 1, "source": "Fajitas · Fri", "reserved": True},
+            {"food": "romano pepper", "quantity": 1, "source": "Paella · Sat"},
+        ])["Romano pepper"]
+        self.assertEqual((g["need"], g["reserved"], g["stock"], g["have"], g["short"]), (1, 1, 1, 0, 1))
+        self.assertEqual([s["source"] for s in g["sources"]], ["Paella · Sat"])
+
+    def test_reserved_leaves_what_is_spare(self):
+        self.add("Plain flour", amount=500)
+        g = self.groups([
+            {"food": "plain flour", "quantity": 200, "unit": "g", "reserved": True},
+            {"food": "plain flour", "quantity": 400, "unit": "g"},
+        ])["Plain flour"]
+        self.assertEqual((g["have"], g["short"]), (300, 100))
+
+    def test_only_reserved_is_left_out(self):
+        self.add("Plain flour", amount=500)
+        res = self.groups([
+            {"food": "plain flour", "quantity": 200, "unit": "g", "reserved": True},
+            {"food": "ground cumin", "quantity": 1, "unit": "tsp", "reserved": True},
+        ])
+        self.assertEqual(res, {})
+
     def test_sums_in_template_unit(self):
         self.add("Plain flour", amount=200)
         g = self.groups([

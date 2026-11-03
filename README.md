@@ -296,6 +296,10 @@ was only the usual pack size, used day to day — templates with `everyday:
 true` — only just enough, going off before it's used, or not checked for a
 month), **Have** and **Added** (in the basket). **Still there** on a Check row
 confirms the amount (or corrects it) through `fridge_assistant/confirm_stock`.
+When shopping ahead (a week that hasn't started), the meals still to come
+before it get first claim on stock: their lines go to `stock_check` with
+`reserved: true`, so a pepper Friday's dinner needs doesn't count as one
+Saturday's can use.
 Recipes that need tidying in Mealie (lines it couldn't read) are listed at
 the top. Within each section ingredients are grouped into supermarket aisles
 (from Mealie's food labels, else Fridge Assistant's category) with a

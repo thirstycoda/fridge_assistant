@@ -835,27 +835,37 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       // Days of the week already gone don't need shopping for.
       const from = week.start < week.today ? week.today : week.start;
       const plan = await fetchPlanRange(this._hass, this._config.mealie_entry, isoDate(from), isoDate(week.end));
+      // Shopping ahead: the meals still to come before this week starts get
+      // first claim on what's in stock, so only what's left over counts.
+      const before = week.start > week.today
+        ? await fetchPlanRange(this._hass, this._config.mealie_entry, isoDate(week.today), isoDate(addDays(week.start, -1)))
+        : [];
       this._week = week;
       const ignore = new Set((this._config.ignore || []).map((x) => String(x).toLowerCase()));
       const lines = [];
       const meals = [];
       const warnings = [];
-      for (const e of plan) {
-        if (this._done.has(String(e.mealplan_id))) continue;
+      const add = async (e, reserved) => {
+        if (this._done.has(String(e.mealplan_id))) return;
         const day = new Date(`${e.mealplan_date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" });
+        const mark = (l) => (reserved ? { ...l, reserved: true } : l);
         if (e.recipe) {
-          meals.push(e);
           const recipe = await this._recipe(e.recipe.slug);
-          lines.push(...recipeLines(recipe, `${recipe.name} · ${day}`, e.mealplan_date, ignore));
+          lines.push(...recipeLines(recipe, `${recipe.name} · ${day}`, e.mealplan_date, ignore).map(mark));
+          if (reserved) return;
+          meals.push(e);
           const issues = recipeIssues(recipe);
           if (issues.length && !warnings.some((w) => w.slug === recipe.slug)) warnings.push({ name: recipe.name, slug: recipe.slug, issues });
         } else if (["breakfast", "lunch", "dinner"].includes(e.entry_type) && e.title) {
           const a = parseAmount(e.title);
           if (!ignore.has(a.food.toLowerCase())) {
-            lines.push({ food: a.food.toLowerCase(), quantity: a.quantity, unit: a.unit === "each" ? "" : a.unit, source: `${e.title} · ${day}`, date: e.mealplan_date });
+            lines.push(mark({ food: a.food.toLowerCase(), quantity: a.quantity, unit: a.unit === "each" ? "" : a.unit, source: `${e.title} · ${day}`, date: e.mealplan_date }));
           }
         }
-      }
+      };
+      for (const e of before) await add(e, true);
+      for (const e of plan) await add(e, false);
+      this._reservedMeals = before.filter((e) => e.recipe && !this._done.has(String(e.mealplan_id))).length;
       this._lines = lines;
       this._warnings = warnings;
       this._mealCount = meals.length;
@@ -1164,7 +1174,8 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       else if (sec === "added") btns = b("have", "Have", "mdi:check") + b("need", "Back to Need", "mdi:undo");
       else if (row.marked) btns = b("need", "Back to Need", "mdi:undo");
       else if (g.unit && g.have > 0) btns = b("gone", "Need", "mdi:cart-arrow-down");
-      const stock = row.stock ? `<div class="stockline">In stock: ${esc(row.stock)}</div>` : "";
+      const kept = g.reserved > 0 && g.unit ? ` · ${esc(amountText(g.reserved, g.unit))} kept for meals before then` : "";
+      const stock = row.stock ? `<div class="stockline">In stock: ${esc(row.stock)}${kept}</div>` : "";
       const why = sec === "check" && g.check ? `<div class="why">${esc(checkText(g))}</div>` : "";
       const gone = (sec === "have" || sec === "check") && !row.marked && g.unit && g.have > 0
         ? `<div class="stockline">Need takes ${esc(amountText(g.have, g.unit))} out of Fridge Assistant.</div>` : "";

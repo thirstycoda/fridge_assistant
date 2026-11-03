@@ -1117,6 +1117,11 @@ class FridgeStore:
         stay in ``other`` (``{unit: quantity}``), and lines without an amount
         ("to taste") set ``to_taste``. ``sources`` lists every line with its
         ``source`` (e.g. the meal it's for). Nothing is changed.
+
+        Lines marked ``reserved`` (meals still to come before the ones being
+        shopped for) aren't shown: they claim stock first, in ``reserved``,
+        so only what's left over counts towards ``have``. A group that only
+        reserved lines touch is left out.
         """
         groups: dict[str, dict[str, Any]] = {}
         templates: dict[str, dict[str, Any]] = {}
@@ -1145,8 +1150,15 @@ class FridgeStore:
                 "key": key, "name": name, "template_id": (template or {}).get("id"),
                 "tracked": template is not None, "unit": amount_unit,
                 "need": 0.0, "other": {}, "to_taste": False, "sources": [], "until": None,
-                "label": None,
+                "label": None, "reserved": 0.0, "shown": False,
             })
+            if line.get("reserved"):
+                if amount_unit and qty > 0:
+                    amount = convert(qty, unit, template)
+                    if amount is not None:
+                        group["reserved"] += amount
+                continue
+            group["shown"] = True
             if not group["label"] and line.get("label"):
                 group["label"] = line["label"]
             group["sources"].append({
@@ -1168,6 +1180,8 @@ class FridgeStore:
 
         out: list[dict[str, Any]] = []
         for key, group in groups.items():
+            if not group.pop("shown"):
+                continue
             template = templates.get(key)
             items = ([i for i in self.items.values() if i.get("template_id") == template["id"]]
                      if template else [])
@@ -1181,7 +1195,9 @@ class FridgeStore:
                         stock += amount
             group["stock"] = round(stock, 2) if stock is not None else None
             need = group["need"]
-            have = min(need, stock) if stock is not None else 0.0
+            spare = max(stock - group["reserved"], 0.0) if stock is not None else None
+            have = min(need, spare) if spare is not None else 0.0
+            group["reserved"] = round(group["reserved"], 2)
             group["need"] = round(need, 2)
             group["have"] = round(have, 2)
             group["short"] = round(max(need - have, 0.0), 2)
@@ -1257,6 +1273,7 @@ class FridgeStore:
         if template.get("everyday"):
             reasons.append("everyday")
         stock, need = group.get("stock") or 0, group.get("need") or 0
+        stock -= group.get("reserved") or 0
         if need and stock < need * 1.25:
             reasons.append("tight")
         last = [checked(i) for i in items]

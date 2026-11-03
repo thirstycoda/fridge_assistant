@@ -650,7 +650,44 @@ class FridgeStore:
                 # Someone said how much (rather than the usual pack size).
                 if explicit:
                     item["amount_checked_at"] = now.isoformat()
+        elif data.get("amount") is not None and data.get("amount_unit"):
+            # No food to count it against (yet): keep what was said anyway.
+            try:
+                item["amount"] = item["amount_initial"] = round(float(data["amount"]), 2)
+                item["amount_unit"] = normalize_unit(data["amount_unit"])
+                item["amount_checked_at"] = now.isoformat()
+            except (TypeError, ValueError):
+                pass
         return item
+
+    def start_tracking(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """Before adding an item with an amount (``amount`` + ``amount_unit``):
+        when its food is known but isn't counted yet, start counting it in
+        that unit (``each`` stays ``each``; ``kg``/``l`` become ``g``/``ml``),
+        with this pack's size as the usual one. Returns the template changed."""
+        if data.get("amount") is None or not data.get("amount_unit"):
+            return None
+        template = self.get_template(data.get("template_id"))
+        if template is None and data.get("contents"):
+            template = self.match_template(data["contents"])
+        if template is None and data.get("name"):
+            template = self.match_template(data["name"])
+        if template is None or template.get("amount_unit") or template_kind(template) != KIND_INGREDIENT:
+            return None
+        unit = normalize_unit(data["amount_unit"]) or "each"
+        base, factor = {"kg": ("g", 1000.0), "l": ("ml", 1000.0), "cl": ("ml", 10.0)}.get(unit, (unit, 1.0))
+        try:
+            amount = float(data["amount"]) * factor
+        except (TypeError, ValueError):
+            return None
+        packs = 1
+        try:
+            packs = max(1, int(str(data.get("quantity") or "1").strip()))
+        except ValueError:
+            packs = 1
+        return self.upsert_user_template({
+            **template, "id": template["id"], "amount_unit": base, "pack_amount": round(amount / packs, 2),
+        })
 
     def add_item(self, item: dict[str, Any]) -> dict[str, Any]:
         self.items[item["id"]] = item

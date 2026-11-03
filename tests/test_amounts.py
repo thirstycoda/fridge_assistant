@@ -93,6 +93,23 @@ class TestConsume(unittest.TestCase):
         self.assertEqual(self.add("Plain flour", amount=300)["amount"], 300)                     # template unit
         self.assertEqual(self.add("Plain flour", amount=2, amount_unit="banana")["amount"], 1500)  # can't convert -> pack
 
+    def test_saying_how_much_starts_counting_a_food(self):
+        self.store.upsert_user_template({"name": "Pears", "aliases": ["conference pears"], "category": "fruit"})
+        data = {"contents": "Ocado Ripe & Ready Conference Pears", "location": "fridge", "quantity": "1",
+                "amount": 4, "amount_unit": "each"}
+        tpl = self.store.start_tracking(data)
+        self.assertEqual((tpl["amount_unit"], tpl["pack_amount"]), ("each", 4))
+        item = self.store.add_item(self.store.build_item(data))
+        self.assertEqual((item["amount"], item["amount_unit"]), (4, "each"))
+        juice = self.store.upsert_user_template({"name": "Pomegranate juice", "aliases": ["pomegreat"], "category": "drinks"})
+        tpl = self.store.start_tracking({"contents": "Pomegreat juice", "amount": 1, "amount_unit": "l"})
+        self.assertEqual((tpl["amount_unit"], tpl["pack_amount"]), ("ml", 1000))
+        self.assertIsNone(self.store.start_tracking({"contents": "Pears", "amount": 2, "amount_unit": "each"}))  # already counted
+
+    def test_amount_kept_without_a_food(self):
+        item = self.store.build_item({"contents": "Ella's Kitchen Veggie Biryani Pouch", "amount": 2, "amount_unit": "each"})
+        self.assertEqual((item["amount"], item["amount_unit"]), (2, "each"))
+
     def test_takes_from_stock(self):
         item = self.add("Plain flour", amount=500)
         res = self.store.consume_ingredients([{"food": "plain flour", "quantity": 300, "unit": "gram"}])

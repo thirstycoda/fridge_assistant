@@ -335,19 +335,23 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (!sel) return;
     const name = (sel.line && sel.line.name) || (sel.product && sel.product.name) || "";
     const res = name ? await this._match(name) : null;
-    const tpl = res && res.template && res.template.amount_unit ? res.template : null;
+    const found = res && res.template;
     if (sel !== this._sel) return;
-    sel.tpl = tpl;
     sel.amountTouched = false;
-    if (!tpl) { sel.per = null; return; }
-    const units = amountUnits(tpl);
+    // Every line gets a How much box. A food that isn't counted yet starts
+    // being counted in whatever unit is given here (Fridge Assistant sets it up).
+    const tpl = found && found.amount_unit ? found : null;
+    sel.tpl = tpl;
+    const units = tpl ? amountUnits(tpl) : ["each", "g", "kg", "ml", "l"];
+    sel.units = units;
     const fits = (g) => g && units.includes(g.unit) ? g : null;
     const sized = fits(parseSize(sel.product && sel.product.size))
       || fits(parseSize(sel.product && sel.product.name))
       || fits(parseSize(sel.line && sel.line.name));
     sel.sized = !!sized;   // read off the product, not the usual pack size
-    sel.per = sized || (tpl.pack_amount ? { quantity: Number(tpl.pack_amount), unit: tpl.amount_unit } : null);
-    sel.amountUnit = sel.per ? sel.per.unit : tpl.amount_unit;
+    sel.per = sized || (tpl && tpl.pack_amount ? { quantity: Number(tpl.pack_amount), unit: tpl.amount_unit } : null);
+    const firstUnit = found && found.category === "drinks" ? "ml" : "each";
+    sel.amountUnit = sel.per ? sel.per.unit : tpl ? tpl.amount_unit : firstUnit;
     this._syncAmount(sel);
   }
 
@@ -382,9 +386,9 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const amount = Number(sel.amount);
     // Only an amount read off the product or typed in counts as known; the
     // usual pack size is left for Fridge Assistant to guess (and to check).
-    if (sel.tpl && sel.amount !== "" && amount > 0 && (sel.amountTouched || sel.sized)) {
+    if (sel.units && sel.amount !== "" && amount > 0 && (sel.amountTouched || sel.sized)) {
       item.amount = amount;
-      item.amount_unit = sel.amountUnit || sel.tpl.amount_unit;
+      item.amount_unit = sel.amountUnit || (sel.tpl && sel.tpl.amount_unit) || "each";
     }
 
     this._busy = true;
@@ -784,11 +788,11 @@ class FridgeAssistantUnpackCard extends HTMLElement {
           <span>${sel.qty}${line ? ` of ${line.qty} left` : ""}</span>
           <button data-act="plus" ${sel.qty >= max ? "disabled" : ""}>+</button>
         </div>` : ""}
-      ${open && sel.tpl ? `
+      ${open && sel.units ? `
         <div class="amt">
           <label for="amt">How much</label>
           <input id="amt" type="number" inputmode="decimal" min="0" step="any" value="${esc(sel.amount || "")}" placeholder="?">
-          <select id="amtunit" aria-label="Unit">${amountUnits(sel.tpl).map((u) =>
+          <select id="amtunit" aria-label="Unit">${sel.units.map((u) =>
             `<option value="${esc(u)}"${u === sel.amountUnit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
         </div>` : ""}
       ${open ? `<div class="locs">

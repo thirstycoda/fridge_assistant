@@ -153,6 +153,8 @@ class FridgeRuntime:
         if by is not None:
             # The authenticated caller wins over anything in the payload.
             data = {**data, "added_by": by, "added_by_name": by_name}
+        # A known food said to have an amount starts being counted that way.
+        self.store.start_tracking(data)
         item = self.store.build_item(data, self.code_format)
         self.store.add_item(item)
         await self.async_changed()

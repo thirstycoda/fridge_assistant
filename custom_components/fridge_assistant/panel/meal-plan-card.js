@@ -1614,7 +1614,9 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
         .days > .past { opacity: .6; }
         .empty { padding: 4px 16px 16px; color: var(--secondary-text-color); }
         .more { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
-        .empty .more { margin-top: 12px; }
+        .lead { margin: 0 0 12px; }
+        .more > a.plan { border: none; background: color-mix(in srgb, var(--primary-color) 70%, black); color: #fff; }
+        .more > a.plan ha-icon { color: #fff; }
         .more > button, .more > a { box-sizing: border-box; text-decoration: none; width: 100%; padding: 12px; border-radius: 12px; border: 1px dashed var(--divider-color);
           background: none; color: var(--primary-text-color); font: inherit; font-weight: 500; cursor: pointer;
           display: flex; align-items: center; justify-content: center; gap: 8px; }
@@ -1682,9 +1684,9 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     if (this._error) { msg.innerHTML = `<div class="err">${esc(this._error)}</div>`; return; }
     if (this._plan == null) { msg.innerHTML = `<div class="empty">Loading…</div>`; days.replaceChildren(); more.innerHTML = ""; return; }
     const planned = this._plan.length > 0;
-    const mealieBtn = `<a href="${esc(planUrl)}" target="_blank" rel="noopener"><ha-icon icon="mdi:calendar-edit"></ha-icon>Plan in Mealie</a>`;
-    msg.innerHTML = planned ? "" : `<div class="empty">Nothing planned for ${esc(weekName(w.start, this._config.week_start).toLowerCase())} yet. Here's what could do with using up, and recipes that use it.
-      <div class="more">${mealieBtn}</div></div>`;
+    const mealieBtn = `<a class="plan" href="${esc(planUrl)}" target="_blank" rel="noopener"><ha-icon icon="mdi:calendar-edit"></ha-icon>Plan in Mealie</a>`;
+    msg.innerHTML = planned ? "" : `<div class="more lead">${mealieBtn}</div>
+      <div class="empty">Nothing planned for ${esc(weekName(w.start, this._config.week_start).toLowerCase())} yet. Here's what could do with using up, and recipes that use it.</div>`;
     // Day cards, reused while the week stays the same.
     const dates = Array.from({ length: 7 }, (_, i) => isoDate(addDays(w.start, i)));
     for (const key of [...this._days.keys()]) if (!dates.includes(key)) this._days.delete(key);

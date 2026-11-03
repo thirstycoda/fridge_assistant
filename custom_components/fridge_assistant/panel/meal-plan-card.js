@@ -621,7 +621,7 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
  * isn't tracked yet), so stock stays the source of truth; Need on something
  * in Have takes it back out. The list follows stock changes as they happen.
  * "Added" (in the basket) marks are shared by everyone and lapse after a
- * week; "just mark as have" (for things not worth tracking) lasts until undone.
+ * week. The list moves on by itself: past days drop off after midnight.
  *
  *   type: custom:fridge-assistant-shopping-card
  *   mealie_entry: 01ABC...           # optional, the Mealie config entry
@@ -985,7 +985,6 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       else if (btn.dataset.act === "added") this._mark(group, "added");
       else if (btn.dataset.act === "have") this._openHave(group);
       else if (btn.dataset.act === "havewhere") this._have(group, btn.dataset.loc);
-      else if (btn.dataset.act === "justhave") this._mark(group, "have");
       else if (btn.dataset.act === "cancelhave") { this._form = null; this._render(); }
       else if (btn.dataset.act === "need") this._mark(group, null);
       else if (btn.dataset.act === "gone") this._backToNeed(group);
@@ -1039,7 +1038,6 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       <div class="locs">${locs.map(([key, label, icon]) => `<button data-act="havewhere" data-loc="${key}" data-key="${k}" data-sec="${sec}"
         class="${g.location === key ? "sug" : ""}" ${this._busy ? "disabled" : ""}><ha-icon icon="${icon}"></ha-icon>${label}</button>`).join("")}</div>
       <div class="links">
-        <button class="link" data-act="justhave" data-key="${k}" data-sec="${sec}">Just mark as have (don't track it)</button>
         <button class="link" data-act="cancelhave" data-key="${k}" data-sec="${sec}">Cancel</button>
       </div>
     </div>`;

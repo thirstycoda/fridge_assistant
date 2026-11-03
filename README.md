@@ -299,8 +299,8 @@ how much you have and where it is, and adds it (`fridge_assistant/stock_have`)
 — setting the food up first when it isn't tracked yet, e.g. 30 g of smoked
 paprika, whose teaspoons then count as about 2.5 g each. On something in Have,
 **Need** takes it back out (it was eaten after all). The list follows stock
-changes as they happen. "Added" marks are shared and lapse after a week;
-"just mark as have" is for things not worth tracking and lasts until undone.
+changes as they happen, and past days drop off after midnight. "Added"
+marks are shared and lapse after a week.
 
 ```yaml
 type: custom:fridge-assistant-shopping-card

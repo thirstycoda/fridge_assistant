@@ -498,6 +498,10 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .actions button:disabled { opacity: .6; cursor: default; }
         .actions ha-icon { --mdc-icon-size: 20px; }
         .actions button.on { border-color: var(--primary-color); color: var(--primary-color); }
+        /* Mealie's look: its orange, its icon. */
+        .actions button.mealie { background: #E58325; color: #fff; border-color: transparent; border-radius: 20px; gap: 8px;
+          flex: 1 0 auto; white-space: nowrap; padding: 8px 14px 8px 8px; }
+        .actions button.mealie img { width: 20px; height: 20px; padding: 3px; border-radius: 50%; background: #fff; }
         .label { margin: 0 8px 10px; padding: 10px 12px; border-radius: 12px; background: var(--card-background-color);
           display: flex; flex-direction: column; gap: 10px; }
         .lrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
@@ -593,7 +597,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         ${done && !done.skipped ? `<ha-icon class="made" icon="mdi:check-circle"></ha-icon>` : ""}
       </button>
       ${open ? `<div class="actions">
-        <button data-act="open" data-id="${id}"><ha-icon icon="mdi:open-in-new"></ha-icon>Open in Mealie</button>
+        <button class="mealie" data-act="open" data-id="${id}"><img src="${esc(this._config.mealie_url)}/icons/android-chrome-192x192.png" alt=""
+          onerror="this.style.display='none'">Open in Mealie</button>
         <button class="primary" data-act="made" data-id="${id}" ${done || busy ? "disabled" : ""}>
           <ha-icon icon="${done ? "mdi:check" : "mdi:pot-steam-outline"}"></ha-icon>${busy ? "Taking out…" : done ? "Made" : "Made it"}</button>
         <button data-act="label" data-id="${id}" class="${labelOpen ? "on" : ""}" aria-expanded="${labelOpen}">
@@ -1616,7 +1621,7 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
         .more { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
         .lead { margin: 0 0 12px; }
         /* Mealie's look: its orange, its icon. */
-        .more > a.plan { align-self: flex-start; width: auto; border: none; border-radius: 20px; padding: 8px 16px 8px 8px;
+        .more > a.plan { align-self: center; width: auto; border: none; border-radius: 20px; padding: 8px 16px 8px 8px;
           background: #E58325; color: #fff; font-size: 15px; gap: 8px; }
         .more > a.plan img { width: 22px; height: 22px; padding: 3px; border-radius: 50%; background: #fff; }
         .more > button, .more > a { box-sizing: border-box; text-decoration: none; width: 100%; padding: 12px; border-radius: 12px; border: 1px dashed var(--divider-color);

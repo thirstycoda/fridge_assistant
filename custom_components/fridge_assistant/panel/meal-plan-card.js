@@ -149,6 +149,18 @@ function shoppingWeek(weekStart, planDay, offset = 0) {
   return { start, end: addDays(start, 6), today };
 }
 
+/* "Last week", "This week", "Next week"… for a week starting `start`,
+ * counted from the calendar week today is in. */
+function weekName(start, weekStart) {
+  const ws = Math.max(0, WEEKDAYS.indexOf(String(weekStart).toLowerCase()));
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const current = addDays(today, -((today.getDay() - ws + 7) % 7));
+  const s = new Date(start); s.setHours(12, 0, 0, 0);
+  const n = Math.round((s - current) / (7 * 86400000));
+  return n === 0 ? "This week" : n === 1 ? "Next week" : n === -1 ? "Last week"
+    : n > 0 ? `In ${n} weeks` : `${-n} weeks ago`;
+}
+
 /* When to look at the plan again: on coming back to the page, just after
  * midnight (the day moves on) and otherwise hourly, for plan edits made in
  * Mealie. Stock changes arrive by themselves. Returns a function that stops it. */
@@ -1212,7 +1224,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     const body = this.shadowRoot.getElementById("body");
     const fmtDay = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
     const w = this._week || shoppingWeek(this._config.week_start, this._config.plan_day, this._offset);
-    const which = this._offset === 0 ? "" : this._offset === 1 ? "the week after · " : this._offset === -1 ? "the week before · " : "";
+    const which = `${weekName(w.start, this._config.week_start)} · `;
     const count = this._groups ? ` · ${this._mealCount} meal${this._mealCount === 1 ? "" : "s"}` : "";
     const sub = `${which}${fmtDay(isoDate(w.start))} – ${fmtDay(isoDate(w.end))}${count}`;
     const head = `<div class="head"><div class="title">${esc(this._config.title)}</div>
@@ -1600,7 +1612,7 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
         .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; padding: 6px; }
         .days { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
         .days > .past { opacity: .6; }
-        .empty { padding: 4px 4px 12px; color: var(--secondary-text-color); }
+        .empty { padding: 4px 16px 16px; color: var(--secondary-text-color); }
         .more { margin-top: 16px; }
         .more > button { width: 100%; padding: 12px; border-radius: 12px; border: 1px dashed var(--divider-color);
           background: none; color: var(--primary-text-color); font: inherit; font-weight: 500; cursor: pointer;
@@ -1651,7 +1663,7 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     const w = this._week();
     const fmt = (d) => d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
     // Same header as the shopping list.
-    const which = this._offset === 0 ? "" : this._offset === 1 ? "the week after · " : this._offset === -1 ? "the week before · " : "";
+    const which = `${weekName(w.start, this._config.week_start)} · `;
     const meals = (this._plan || []).filter((e) => e.recipe).length;
     const count = this._plan ? ` · ${meals} meal${meals === 1 ? "" : "s"}` : "";
     root.getElementById("bar").innerHTML = `<div class="head"><div class="title">${esc(this._config.title)}</div>
@@ -1666,7 +1678,7 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     if (this._error) { msg.innerHTML = `<div class="err">${esc(this._error)}</div>`; return; }
     if (this._plan == null) { msg.innerHTML = `<div class="empty">Loading…</div>`; days.replaceChildren(); more.innerHTML = ""; return; }
     const planned = this._plan.length > 0;
-    msg.innerHTML = planned ? "" : `<div class="empty">Nothing planned for this week yet. Here's what could do with using up, and recipes that use it.</div>`;
+    msg.innerHTML = planned ? "" : `<div class="empty">Nothing planned for ${esc(weekName(w.start, this._config.week_start).toLowerCase())} yet. Here's what could do with using up, and recipes that use it.</div>`;
     // Day cards, reused while the week stays the same.
     const dates = Array.from({ length: 7 }, (_, i) => isoDate(addDays(w.start, i)));
     for (const key of [...this._days.keys()]) if (!dates.includes(key)) this._days.delete(key);

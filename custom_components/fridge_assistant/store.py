@@ -240,6 +240,11 @@ class FridgeStore:
         self.user_templates: dict[str, dict[str, Any]] = {}
         self.hidden: set[str] = set()
         self.history: list[dict[str, Any]] = []  # newest first, capped
+        # Shopping list marks shared by everyone: key -> {state, at, sticky}.
+        self.shopping_marks: dict[str, dict[str, Any]] = {}
+        # What goes in the container when a meal's leftovers are labelled
+        # ("Carbonara sauce"), per recipe: key -> name.
+        self.meal_labels: dict[str, str] = {}
         self._seed: dict[str, dict[str, Any]] = {}
 
     # ---- loading / saving -------------------------------------------------
@@ -253,6 +258,8 @@ class FridgeStore:
             }
             self.hidden = set(data.get("hidden", []))
             self.history = list(data.get("history", []))[:MAX_HISTORY]
+            self.shopping_marks = dict(data.get("shopping_marks", {}))
+            self.meal_labels = dict(data.get("meal_labels", {}))
         self._seed = await self.hass.async_add_executor_job(self._read_seed)
         if self.backfill_amounts():
             await self.async_save()
@@ -284,6 +291,8 @@ class FridgeStore:
                 "user_templates": list(self.user_templates.values()),
                 "hidden": list(self.hidden),
                 "history": self.history,
+                "shopping_marks": self.shopping_marks,
+                "meal_labels": self.meal_labels,
             }
         )
 
@@ -618,9 +627,17 @@ class FridgeStore:
             )
         item["kind"] = kind
         # How much is in it, when the template knows its pack size/unit: a
-        # count ("2") is that many packs, a measure ("1.5 kg") converts.
+        # count ("2") is that many packs, a measure ("1.5 kg") converts. An
+        # explicit amount may come in another unit ("4" each potatoes, kept in
+        # grams) and is converted; one that can't be falls back to the guess.
         if template and template.get("amount_unit"):
             amount = data.get("amount")
+            given_unit = data.get("amount_unit")
+            if amount is not None and given_unit:
+                try:
+                    amount = convert(float(amount), given_unit, template)
+                except (TypeError, ValueError):
+                    amount = None
             if amount is None:
                 amount = initial_amount(template, data.get("quantity"))
             if amount is not None:
@@ -1042,6 +1059,109 @@ class FridgeStore:
         for res in results:
             counts[res["status"]] = counts.get(res["status"], 0) + 1
         return {"dry_run": dry_run, "factor": factor, "lines": results, "counts": counts, "completed": events}
+
+    # ---- shopping list -----------------------------------------------------
+
+    def stock_check(self, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """What a set of recipe lines needs, against what's in stock.
+
+        Lines (``{"food", "quantity", "unit", "source"}``, optional
+        ``template_id``) are grouped per ingredient template, or per food name
+        when nothing matches, and summed in the template's unit. Each group
+        reports ``need`` (converted total), ``stock``, ``have`` (the part of
+        the need covered by stock) and ``short``; amounts that don't convert
+        stay in ``other`` (``{unit: quantity}``), and lines without an amount
+        ("to taste") set ``to_taste``. ``sources`` lists every line with its
+        ``source`` (e.g. the meal it's for). Nothing is changed.
+        """
+        groups: dict[str, dict[str, Any]] = {}
+        templates: dict[str, dict[str, Any]] = {}
+        for line in lines:
+            food = str(line.get("food") or line.get("name") or "").strip()
+            if not food:
+                continue
+            template = self.get_template(line.get("template_id")) if line.get("template_id") else None
+            if template is None:
+                template = self.match_ingredient(food)
+            unit = line.get("unit") or ""
+            try:
+                qty = float(line.get("quantity") or 0)
+            except (TypeError, ValueError):
+                qty = 0.0
+            if template is not None:
+                key = f"t:{template['id']}"
+                templates[key] = template
+                name = template.get("name") or food
+                amount_unit = normalize_unit(template["amount_unit"]) if template.get("amount_unit") else None
+            else:
+                key = "f:" + (" ".join(sorted(_stems(_tokens(food)))) or food.lower())
+                name = food[:1].upper() + food[1:]
+                amount_unit = None
+            group = groups.setdefault(key, {
+                "key": key, "name": name, "template_id": (template or {}).get("id"),
+                "tracked": template is not None, "unit": amount_unit,
+                "need": 0.0, "other": {}, "to_taste": False, "sources": [],
+            })
+            group["sources"].append({
+                "source": line.get("source"), "food": food,
+                "quantity": qty or None, "unit": unit,
+            })
+            if qty <= 0 or normalize_unit(unit) in NEGLIGIBLE_UNITS:
+                group["to_taste"] = True
+                continue
+            if amount_unit:
+                amount = convert(qty, unit, template)
+                if amount is not None:
+                    group["need"] += amount
+                    continue
+            u = normalize_unit(unit)
+            group["other"][u] = group["other"].get(u, 0.0) + qty
+
+        out: list[dict[str, Any]] = []
+        for key, group in groups.items():
+            template = templates.get(key)
+            items = ([i for i in self.items.values() if i.get("template_id") == template["id"]]
+                     if template else [])
+            group["in_stock"] = bool(items)
+            stock = None
+            if template is not None and group["unit"]:
+                stock = 0.0
+                for item in items:
+                    amount = self._ensure_amount(dict(item), template)
+                    if amount:
+                        stock += amount
+            group["stock"] = round(stock, 2) if stock is not None else None
+            need = group["need"]
+            have = min(need, stock) if stock is not None else 0.0
+            group["need"] = round(need, 2)
+            group["have"] = round(have, 2)
+            group["short"] = round(max(need - have, 0.0), 2)
+            group["other"] = {u: round(q, 2) for u, q in group["other"].items()}
+            out.append(group)
+        return sorted(out, key=lambda g: g["name"].lower())
+
+    def shopping_marks_now(self, max_age_days: int = 7) -> dict[str, dict[str, Any]]:
+        """Current marks; ones that aren't sticky lapse after ``max_age_days``."""
+        cutoff = dt_util.now() - _days(max_age_days)
+        keep = {}
+        for key, mark in self.shopping_marks.items():
+            try:
+                at = datetime.fromisoformat(mark.get("at") or "")
+            except ValueError:
+                at = None
+            if mark.get("sticky") or (at is not None and at >= cutoff):
+                keep[key] = mark
+        self.shopping_marks = keep
+        return dict(keep)
+
+    def set_shopping_mark(self, key: str, state: str | None, sticky: bool = False) -> dict[str, Any] | None:
+        """Mark a shopping list entry as ``added`` or ``have``; ``None`` clears it."""
+        if not state:
+            self.shopping_marks.pop(key, None)
+            return None
+        mark = {"state": state, "at": dt_util.now().isoformat(), "sticky": bool(sticky)}
+        self.shopping_marks[key] = mark
+        return mark
 
     def restore_item(self, event_id: str) -> dict[str, Any] | None:
         """Undo a completion or portion event, dropping it from history."""

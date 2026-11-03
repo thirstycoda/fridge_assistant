@@ -6,7 +6,9 @@
  * browser), "Made it", which runs a script that takes the recipe's
  * ingredients out of Fridge Assistant, and "Print label", which adds the
  * cooked meal to Fridge Assistant as a dish (choose how many portions, and
- * Freezer or Fridge) and prints a sticker for each portion. Meals already made show a tick.
+ * Freezer or Fridge, and what's going in when it's only part of the meal,
+ * e.g. "Carbonara sauce", remembered per recipe) and prints a sticker for
+ * each portion. Meals already made show a tick.
  * Loose ingredients on the plan (notes such as "Avocado") get an "Eaten"
  * button that takes it out of Fridge Assistant: the amount at the start of
  * the note ("40 g cannellini beans", "½ avocado", "1 tin chickpeas"), or one
@@ -318,14 +320,20 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     this._render();
     const r = entry.recipe;
     const where = opts.location === "fridge" ? "fridge" : "freezer";
+    const what = String(opts.name || "").trim() || r.name;
     try {
+      // Remember what this recipe's leftovers are (e.g. just the sauce).
+      if (what !== (opts.saved || r.name)) {
+        this._hass.callWS({ type: "fridge_assistant/meal_label", recipe: r.recipe_id || r.slug, name: what === r.name ? "" : what })
+          .catch(() => {});
+      }
       const added = await this._hass.callWS({
         type: "fridge_assistant/add_item",
         item: {
-          name: r.name, contents: r.name, kind: "dish", location: where,
+          name: what, contents: what, kind: "dish", location: where,
           portions: opts.portions,
           photo: this._imageUrl(r) || null,
-          notes: this._config.label_notes || null,
+          notes: [what !== r.name ? `From ${r.name}` : "", this._config.label_notes || ""].filter(Boolean).join(" — ") || null,
         },
       });
       const item = added && added.item;
@@ -364,6 +372,19 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       this._printing.delete(id);
       this._render();
     }
+  }
+
+  /* Start the "What's going in" box with what this recipe was labelled as
+   * last time, or the recipe's name. */
+  async _loadLabelName(entry) {
+    const id = String(entry.mealplan_id);
+    const opts = this._labelOpts(id);
+    if (opts.name != null) return;
+    opts.name = entry.recipe.name;
+    try {
+      const res = await this._hass.callWS({ type: "fridge_assistant/meal_label", recipe: entry.recipe.recipe_id || entry.recipe.slug });
+      if (res && res.name) { opts.saved = res.name; if (opts.name === entry.recipe.name) opts.name = res.name; this._render(); }
+    } catch (err) { /* the recipe name will do */ }
   }
 
   _labelOpts(id) {
@@ -410,6 +431,9 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .label { margin: 0 8px 10px; padding: 10px 12px; border-radius: 12px; background: var(--card-background-color);
           display: flex; flex-direction: column; gap: 10px; }
         .lrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+        .lname { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+        .lname input { font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color); color: var(--primary-text-color); }
         .stepper { display: flex; align-items: center; gap: 12px; }
         .stepper b { min-width: 1.5em; text-align: center; font-size: 18px; }
         .label button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--divider-color);
@@ -431,6 +455,9 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .err { margin-top: 12px; color: var(--error-color); font-size: 14px; }
       </style>
       <ha-card><div id="body"></div></ha-card>`;
+    root.getElementById("body").addEventListener("input", (ev) => {
+      if (ev.target.dataset && ev.target.dataset.field === "name") this._labelOpts(ev.target.dataset.id).name = ev.target.value;
+    });
     root.getElementById("body").addEventListener("click", (ev) => {
       const btn = ev.target.closest("[data-act]");
       if (!btn) return;
@@ -441,7 +468,12 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       else if (btn.dataset.act === "open") window.open(this._recipeUrl(entry.recipe), "_blank", "noopener");
       else if (btn.dataset.act === "made") this._madeIt(entry);
       else if (btn.dataset.act === "eaten") this._eaten(entry);
-      else if (btn.dataset.act === "label") { this._labelOpen = this._labelOpen === id ? null : id; this._printed.delete(id); this._render(); }
+      else if (btn.dataset.act === "label") {
+        this._labelOpen = this._labelOpen === id ? null : id;
+        this._printed.delete(id);
+        if (this._labelOpen) this._loadLabelName(entry);
+        this._render();
+      }
       else if (btn.dataset.act === "print") this._printLabel(entry);
       else if (btn.dataset.act === "less" || btn.dataset.act === "more") {
         const o = this._labelOpts(id);
@@ -498,6 +530,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
           <ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>
       </div>` : ""}
       ${open && labelOpen ? `<div class="label">
+        <label class="lname"><span>What's going in</span>
+          <input data-id="${id}" data-field="name" value="${esc(opts.name ?? r.name)}" ${printing ? "disabled" : ""}></label>
         <div class="lrow"><span>Portions</span>
           <div class="stepper">
             <button data-act="less" data-id="${id}" ${opts.portions <= 1 || printing ? "disabled" : ""} aria-label="Fewer">−</button>
@@ -550,5 +584,306 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
     type: "fridge-assistant-meal-plan-card",
     name: "Fridge Assistant meal plan",
     description: "One day of a Mealie meal plan, with Open in Mealie and Made it buttons.",
+  });
+}
+
+/* ---- Shopping list card ---------------------------------------------------
+ *
+ * The coming week's meal plan as a shopping list in three sections:
+ * Need (what the recipes use and stock doesn't cover), Added (in the basket)
+ * and Have (covered by stock, or marked as had). Tap an ingredient to see the
+ * meals it's for and move it between sections. Marks are shared by everyone
+ * (kept by Fridge Assistant); marking an untracked ingredient (a spice, say)
+ * as Have sticks until it's undone, a tracked one lapses after a week.
+ *
+ *   type: custom:fridge-assistant-shopping-card
+ *   mealie_entry: 01ABC...           # optional, the Mealie config entry
+ *   todo_entity: todo.planned_meals  # meals already made are left out
+ *   ignore: [water]                  # foods never put on the list
+ */
+
+const PEPPERS = ["red pepper", "yellow pepper", "green pepper", "orange pepper", "sweet pepper", "bell pepper"];
+
+/* Household rules shared with the cook script: peppers are romano peppers
+ * (except in a lasagne) and vegetable stock is bouillon powder, 4 tsp a litre. */
+function recipeLines(recipe, source, ignore) {
+  const lasagna = /lasagn/i.test(recipe.name || "");
+  const out = [];
+  for (const i of recipe.ingredients || []) {
+    if (!i.food) continue;
+    let food = String(i.food.name || "").toLowerCase();
+    let unit = i.unit ? i.unit.name : "";
+    let quantity = i.quantity || 0;
+    if (PEPPERS.includes(food) && !lasagna) food = "romano pepper";
+    if (food === "vegetable stock") {
+      const u = String(unit).toLowerCase();
+      const ml = /^(ml|millilit(re|er)s?)$/.test(u) ? quantity : /^(l|lit(re|er)s?)$/.test(u) ? quantity * 1000 : 0;
+      food = "vegetable bouillon powder"; unit = "teaspoon"; quantity = ml ? Math.max(Math.round(ml / 1000 * 4), 1) : 0;
+    }
+    if (ignore.has(food)) continue;
+    out.push({ food, quantity, unit, source });
+  }
+  return out;
+}
+
+function amountText(quantity, unit) {
+  if (!quantity) return "";
+  const u = String(unit || "");
+  if (["g", "ml", "each", "", "kg", "l"].includes(u)) return fmtAmount(quantity, u);
+  return fmtAmount(quantity, u.replace(/s$/, ""));
+}
+
+class FridgeAssistantShoppingCard extends HTMLElement {
+  static getStubConfig() { return { todo_entity: "todo.planned_meals" }; }
+
+  setConfig(config) {
+    this._config = { todo_entity: "todo.planned_meals", ignore: ["water"], title: "Shopping", ...config };
+    this._groups = this._groups || null;
+    this._marks = this._marks || {};
+    this._done = this._done || new Set();
+    this._open = this._open || null;
+    this._recipes = this._recipes || new Map();
+    if (this.shadowRoot) this._render();
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (!this.shadowRoot) this._build();
+    if (first) { this._subscribe(); this._load(); }
+  }
+
+  getCardSize() { return 8; }
+
+  getGridOptions() { return { columns: 12, min_columns: 6 }; }
+
+  connectedCallback() {
+    if (this._hass) { this._subscribe(); this._load(); }
+    if (!this._tick) this._tick = setInterval(() => this._load(), 5 * 60 * 1000);
+  }
+
+  disconnectedCallback() {
+    if (this._tick) { clearInterval(this._tick); this._tick = null; }
+    if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
+  }
+
+  _subscribe() {
+    if (!this._hass || this._unsub || !this.isConnected || !this._config.todo_entity) return;
+    this._unsub = this._hass.connection.subscribeMessage((msg) => {
+      const done = new Set();
+      (msg.items || []).forEach((item) => {
+        let info = {};
+        try { info = JSON.parse(item.description || "{}") || {}; } catch (e) { info = {}; }
+        if (info.mealplan_id != null && info.done) done.add(String(info.mealplan_id));
+      });
+      const changed = done.size !== this._done.size || [...done].some((d) => !this._done.has(d));
+      this._done = done;
+      if (changed && this._loadedOnce) this._load(true);
+    }, { type: "todo/item/subscribe", entity_id: this._config.todo_entity }).catch(() => { this._unsub = null; return null; });
+  }
+
+  async _recipe(slug) {
+    if (!this._recipes.has(slug)) {
+      const p = mealieEntryId(this._hass, this._config.mealie_entry).then((entry) => this._hass.callWS({
+        type: "call_service", domain: "mealie", service: "get_recipe",
+        service_data: { config_entry_id: entry, recipe_id: slug }, return_response: true,
+      })).then((res) => res.response.recipe);
+      p.catch(() => this._recipes.delete(slug));
+      this._recipes.set(slug, p);
+    }
+    return this._recipes.get(slug);
+  }
+
+  async _load(force = false) {
+    if (!this._hass || this._loading) return;
+    this._loading = true;
+    if (force) this._recipes.clear();
+    this._render();
+    try {
+      const plan = await fetchPlan(this._hass, this._config.mealie_entry, force);
+      const ignore = new Set((this._config.ignore || []).map((x) => String(x).toLowerCase()));
+      const lines = [];
+      const meals = [];
+      for (const e of plan) {
+        if (this._done.has(String(e.mealplan_id))) continue;
+        const day = new Date(`${e.mealplan_date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" });
+        if (e.recipe) {
+          meals.push(e);
+          const recipe = await this._recipe(e.recipe.slug);
+          lines.push(...recipeLines(recipe, `${recipe.name} · ${day}`, ignore));
+        } else if (["breakfast", "lunch", "dinner"].includes(e.entry_type) && e.title) {
+          const a = parseAmount(e.title);
+          if (!ignore.has(a.food.toLowerCase())) {
+            lines.push({ food: a.food.toLowerCase(), quantity: a.quantity, unit: a.unit === "each" ? "" : a.unit, source: `${e.title} · ${day}` });
+          }
+        }
+      }
+      const res = await this._hass.callWS({ type: "fridge_assistant/stock_check", lines });
+      this._groups = res.groups;
+      this._marks = res.marks || {};
+      this._mealCount = meals.length;
+      this._range = plan.length ? [plan.map((e) => e.mealplan_date).sort()[0], plan.map((e) => e.mealplan_date).sort().pop()] : null;
+      this._error = null;
+      this._loadedOnce = true;
+    } catch (err) {
+      this._error = err.message || String(err);
+    } finally {
+      this._loading = false;
+      this._render();
+    }
+  }
+
+  async _mark(group, state) {
+    try {
+      const res = await this._hass.callWS({
+        type: "fridge_assistant/set_shopping_mark", key: group.key, state,
+        sticky: state === "have" && !group.unit,
+      });
+      this._marks = res.marks || {};
+      this._open = null;
+    } catch (err) {
+      this._error = err.message || String(err);
+    }
+    this._render();
+  }
+
+  /* Split every group into its Need / Added / Have rows. */
+  _rows() {
+    const need = []; const added = []; const have = [];
+    for (const g of this._groups || []) {
+      const mark = this._marks[g.key];
+      const other = Object.entries(g.other || {}).map(([u, q]) => amountText(q, u)).filter(Boolean);
+      const measured = Boolean(g.unit) && (g.need > 0 || other.length > 0);
+      let missing = "";     // what to get ("" = nothing)
+      let covered = "";     // what stock covers ("" = nothing)
+      if (!g.tracked) {
+        // Not in Fridge Assistant (spices, say): always to get unless marked.
+        missing = other.join(" + ") || "to taste";
+      } else if (!measured) {
+        // Known food without amounts (or only "to taste"): stock or not.
+        if (g.in_stock || (g.stock || 0) > 0) covered = "in stock"; else missing = other.join(" + ") || "some";
+      } else {
+        const parts = [];
+        if (g.short > 0) parts.push(amountText(g.short, g.unit));
+        parts.push(...other);
+        missing = parts.join(" + ");
+        if (g.have > 0) covered = amountText(g.have, g.unit);
+      }
+      const total = [g.unit && g.need ? amountText(g.need, g.unit) : "", ...other].filter(Boolean).join(" + ")
+        || (g.to_taste ? "to taste" : "");
+      const stock = g.stock != null ? amountText(g.stock, g.unit) || "none" : "";
+      if (mark && mark.state === "have") { have.push({ g, text: total, marked: true, stock }); continue; }
+      if (missing) (mark && mark.state === "added" ? added : need).push({ g, text: missing, stock });
+      if (covered) have.push({ g, text: covered, stock });
+    }
+    return { need, added, have };
+  }
+
+  _build() {
+    const root = this.attachShadow({ mode: "open" });
+    root.innerHTML = `
+      <style>
+        ha-card { padding: 16px; }
+        .head { display: flex; align-items: center; gap: 8px; }
+        .title { font-size: 20px; font-weight: 600; flex: 1 1 auto; }
+        .sub { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }
+        .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; padding: 6px; }
+        .sec { margin-top: 18px; }
+        .sec-h { display: flex; align-items: center; gap: 6px; font-size: 13px; text-transform: uppercase;
+          letter-spacing: .04em; color: var(--secondary-text-color); margin-bottom: 4px; }
+        .sec-h b { font-weight: 600; }
+        .row { border-bottom: 1px solid var(--divider-color); }
+        .row:last-child { border-bottom: none; }
+        .line { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 10px 2px; text-align: left;
+          font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+        .line .n { flex: 1 1 auto; }
+        .line .a { color: var(--secondary-text-color); font-size: 14px; white-space: nowrap; }
+        .sec.added .line .n, .sec.have .line .n { color: var(--secondary-text-color); }
+        .detail { padding: 0 2px 12px; }
+        .meals { font-size: 14px; color: var(--secondary-text-color); display: flex; flex-direction: column; gap: 2px; }
+        .meals span b { color: var(--primary-text-color); font-weight: 500; }
+        .stockline { font-size: 13px; color: var(--secondary-text-color); margin-top: 6px; }
+        .btns { display: flex; gap: 8px; margin-top: 10px; }
+        .btns button { flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 6px;
+          font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 12px; padding: 9px 10px;
+          border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+        .btns button.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
+        .btns ha-icon { --mdc-icon-size: 18px; }
+        .empty { color: var(--secondary-text-color); font-size: 14px; padding: 6px 2px; }
+        .err { margin-top: 12px; color: var(--error-color); font-size: 14px; }
+      </style>
+      <ha-card><div id="body"></div></ha-card>`;
+    root.getElementById("body").addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-act]");
+      if (!btn) return;
+      if (btn.dataset.act === "refresh") { this._load(true); return; }
+      const group = (this._groups || []).find((g) => g.key === btn.dataset.key);
+      if (!group) return;
+      const rowId = `${btn.dataset.sec}|${group.key}`;
+      if (btn.dataset.act === "toggle") { this._open = this._open === rowId ? null : rowId; this._render(); }
+      else if (btn.dataset.act === "added") this._mark(group, "added");
+      else if (btn.dataset.act === "have") this._mark(group, "have");
+      else if (btn.dataset.act === "need") this._mark(group, null);
+    });
+  }
+
+  _rowHtml(sec, row) {
+    const g = row.g;
+    const rowId = `${sec}|${g.key}`;
+    const open = this._open === rowId;
+    const k = esc(g.key);
+    let detail = "";
+    if (open) {
+      const meals = g.sources.map((s) => {
+        const amt = s.quantity ? amountText(s.quantity, s.unit) : "";
+        return `<span>${esc(s.source || s.food)}${amt ? ` — <b>${esc(amt)}</b>` : ""}</span>`;
+      }).join("");
+      const b = (act, label, icon, primary) =>
+        `<button data-act="${act}" data-key="${k}" data-sec="${sec}" class="${primary ? "primary" : ""}"><ha-icon icon="${icon}"></ha-icon>${label}</button>`;
+      let btns = "";
+      if (sec === "need") btns = b("added", "Added", "mdi:basket-plus-outline", true) + b("have", "Have", "mdi:check");
+      else if (sec === "added") btns = b("have", "Have", "mdi:check") + b("need", "Back to Need", "mdi:undo");
+      else if (row.marked) btns = b("need", "Back to Need", "mdi:undo");
+      const stock = row.stock ? `<div class="stockline">In stock: ${esc(row.stock)}</div>` : "";
+      detail = `<div class="detail"><div class="meals">${meals}</div>${stock}${btns ? `<div class="btns">${btns}</div>` : ""}</div>`;
+    }
+    return `<div class="row">
+      <button class="line" data-act="toggle" data-key="${k}" data-sec="${sec}" aria-expanded="${open}">
+        <span class="n">${esc(g.name)}</span><span class="a">${esc(row.text)}</span>
+      </button>${detail}</div>`;
+  }
+
+  _render() {
+    if (!this.shadowRoot) return;
+    const body = this.shadowRoot.getElementById("body");
+    const fmtDay = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    const sub = this._range ? `${this._mealCount} meal${this._mealCount === 1 ? "" : "s"} · ${fmtDay(this._range[0])} – ${fmtDay(this._range[1])}` : "";
+    const head = `<div class="head"><div class="title">${esc(this._config.title)}</div>
+      <button class="refresh" data-act="refresh" title="Refresh"><ha-icon icon="mdi:refresh"></ha-icon></button></div>
+      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+    if (!this._groups) {
+      body.innerHTML = head + (this._error ? `<div class="err">${esc(this._error)}</div>` : `<div class="empty">Loading…</div>`);
+      return;
+    }
+    const { need, added, have } = this._rows();
+    const section = (key, label, rows, empty) => `<div class="sec ${key}">
+      <div class="sec-h"><b>${label}</b> · ${rows.length}</div>
+      ${rows.length ? rows.map((r) => this._rowHtml(key, r)).join("") : `<div class="empty">${empty}</div>`}
+    </div>`;
+    body.innerHTML = head
+      + section("need", "Need", need, "Nothing else to get.")
+      + section("added", "Added", added, "Nothing in the basket yet.")
+      + section("have", "Have", have, "Nothing from stock yet.")
+      + (this._error ? `<div class="err">${esc(this._error)}</div>` : "");
+  }
+}
+
+if (!customElements.get("fridge-assistant-shopping-card")) {
+  customElements.define("fridge-assistant-shopping-card", FridgeAssistantShoppingCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "fridge-assistant-shopping-card",
+    name: "Fridge Assistant shopping list",
+    description: "The coming week's Mealie meal plan as Need, Added and Have.",
   });
 }

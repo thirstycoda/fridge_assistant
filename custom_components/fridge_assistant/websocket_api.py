@@ -134,6 +134,9 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_print_sticker)
     websocket_api.async_register_command(hass, ws_render_label)
     websocket_api.async_register_command(hass, ws_get_printers)
+    websocket_api.async_register_command(hass, ws_stock_check)
+    websocket_api.async_register_command(hass, ws_set_shopping_mark)
+    websocket_api.async_register_command(hass, ws_meal_label)
 
 
 def _person_pictures(hass: HomeAssistant) -> dict[str, str]:
@@ -764,3 +767,77 @@ async def ws_get_printers(hass, connection, msg) -> None:
     connection.send_result(
         msg["id"], {"available": bool(data), "printers": printers}
     )
+
+
+_LINE_SCHEMA = vol.Schema(
+    {
+        vol.Required("food"): str,
+        vol.Optional("quantity"): vol.Any(None, vol.Coerce(float)),
+        vol.Optional("unit"): vol.Any(None, str),
+        vol.Optional("template_id"): vol.Any(None, str),
+        vol.Optional("source"): vol.Any(None, str),
+    },
+    extra=vol.REMOVE_EXTRA,
+)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/stock_check",
+        vol.Required("lines"): [_LINE_SCHEMA],
+    }
+)
+@websocket_api.async_response
+async def ws_stock_check(hass, connection, msg) -> None:
+    """Group recipe lines per ingredient and compare with stock (a shopping
+    list), together with the shared shopping marks."""
+    runtime = _runtime_or_error(hass, connection, msg)
+    if runtime is None:
+        return
+    groups = runtime.store.stock_check([dict(line) for line in msg["lines"]])
+    connection.send_result(msg["id"], {"groups": groups, "marks": runtime.store.shopping_marks_now()})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/set_shopping_mark",
+        vol.Required("key"): str,
+        vol.Required("state"): vol.Any(None, vol.In(["added", "have"])),
+        vol.Optional("sticky", default=False): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_set_shopping_mark(hass, connection, msg) -> None:
+    """Mark a shopping list entry as added to the basket or already had."""
+    runtime = _runtime_or_error(hass, connection, msg)
+    if runtime is None:
+        return
+    mark = runtime.store.set_shopping_mark(msg["key"], msg["state"], msg["sticky"])
+    await runtime.store.async_save()
+    connection.send_result(msg["id"], {"key": msg["key"], "mark": mark, "marks": runtime.store.shopping_marks_now()})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/meal_label",
+        vol.Required("recipe"): str,
+        # Give a name to remember it (empty forgets it); leave it out to read.
+        vol.Optional("name"): vol.Any(None, str),
+    }
+)
+@websocket_api.async_response
+async def ws_meal_label(hass, connection, msg) -> None:
+    """What a recipe's leftovers are labelled as ("Carbonara sauce")."""
+    runtime = _runtime_or_error(hass, connection, msg)
+    if runtime is None:
+        return
+    store = runtime.store
+    key = msg["recipe"]
+    if "name" in msg:
+        name = (msg["name"] or "").strip()
+        if name:
+            store.meal_labels[key] = name
+        else:
+            store.meal_labels.pop(key, None)
+        await store.async_save()
+    connection.send_result(msg["id"], {"recipe": key, "name": store.meal_labels.get(key)})

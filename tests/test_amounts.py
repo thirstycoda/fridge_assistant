@@ -79,6 +79,13 @@ class TestConsume(unittest.TestCase):
         self.assertEqual(item["amount_unit"], "g")
         self.assertEqual(self.add("Plain flour", quantity="2")["amount"], 3000)
 
+    def test_explicit_amount_in_another_unit(self):
+        self.store.upsert_user_template({"name": "Potatoes", "amount_unit": "g", "pack_amount": 2000, "per": {"each": 170}})
+        self.assertEqual(self.add("Potatoes", amount=4, amount_unit="each")["amount"], 680)
+        self.assertEqual(self.add("Plain flour", amount=0.2, amount_unit="kg")["amount"], 200)
+        self.assertEqual(self.add("Plain flour", amount=300)["amount"], 300)                     # template unit
+        self.assertEqual(self.add("Plain flour", amount=2, amount_unit="banana")["amount"], 1500)  # can't convert -> pack
+
     def test_takes_from_stock(self):
         item = self.add("Plain flour", amount=500)
         res = self.store.consume_ingredients([{"food": "plain flour", "quantity": 300, "unit": "gram"}])
@@ -187,6 +194,73 @@ class TestConsume(unittest.TestCase):
         tpl = self.store.upsert_user_template({"id": self.flour["id"], "name": "Plain flour", "notes": "x"})
         self.assertEqual(tpl["pack_amount"], 1500)
         self.assertEqual(tpl["per"], {"cup": 125})
+
+
+class TestStockCheck(unittest.TestCase):
+    def setUp(self):
+        self.store = make_store()
+        self.store.upsert_user_template({"name": "Plain flour", **FLOUR})
+        self.store.upsert_user_template({"name": "Romano pepper", "aliases": ["romano peppers"],
+                                         "amount_unit": "each", "pack_amount": 2, "per": {"g": 0.006}})
+        self.store.upsert_user_template({"name": "Coconut water", "category": "drinks"})
+
+    def add(self, name, **extra):
+        return self.store.add_item(self.store.build_item({"name": name, "location": "cupboard", **extra}))
+
+    def groups(self, lines):
+        return {g["name"]: g for g in self.store.stock_check(lines)}
+
+    def test_splits_need_and_have(self):
+        self.add("Romano pepper", quantity="1", amount=1)
+        g = self.groups([
+            {"food": "romano pepper", "quantity": 1, "source": "Fajitas"},
+            {"food": "romano peppers", "quantity": 1, "source": "Paella"},
+        ])["Romano pepper"]
+        self.assertEqual((g["need"], g["stock"], g["have"], g["short"]), (2, 1, 1, 1))
+        self.assertEqual([s["source"] for s in g["sources"]], ["Fajitas", "Paella"])
+
+    def test_sums_in_template_unit(self):
+        self.add("Plain flour", amount=200)
+        g = self.groups([
+            {"food": "plain flour", "quantity": 1, "unit": "cup"},      # 125 g
+            {"food": "plain flour", "quantity": 0.1, "unit": "kg"},     # 100 g
+        ])["Plain flour"]
+        self.assertEqual((g["need"], g["have"], g["short"]), (225, 200, 25))
+
+    def test_untracked_and_unconvertible(self):
+        res = self.groups([
+            {"food": "ground cumin", "quantity": 1, "unit": "tsp", "source": "Chilli"},
+            {"food": "ground cumin", "quantity": 2, "unit": "teaspoon", "source": "Daal"},
+            {"food": "salt", "quantity": 0},
+            {"food": "plain flour", "quantity": 1, "unit": "handful"},
+        ])
+        cumin = res["Ground cumin"]
+        self.assertFalse(cumin["tracked"])
+        self.assertEqual(cumin["other"], {"tsp": 3})
+        self.assertTrue(res["Salt"]["to_taste"])
+        self.assertEqual(res["Plain flour"]["other"], {"handful": 1})
+        self.assertEqual(res["Plain flour"]["need"], 0)
+
+    def test_template_without_amounts_reports_presence(self):
+        self.add("Coconut water")
+        g = self.groups([{"food": "coconut water", "quantity": 1}])["Coconut water"]
+        self.assertTrue(g["in_stock"])
+        self.assertIsNone(g["stock"])
+
+    def test_nothing_changes(self):
+        item = self.add("Plain flour", amount=200)
+        self.store.stock_check([{"food": "plain flour", "quantity": 500, "unit": "g"}])
+        self.assertEqual(self.store.items[item["id"]]["amount"], 200)
+
+    def test_marks(self):
+        self.store.set_shopping_mark("t:x", "added")
+        self.store.set_shopping_mark("f:cumin", "have", sticky=True)
+        self.assertEqual(set(self.store.shopping_marks_now()), {"t:x", "f:cumin"})
+        self.store.shopping_marks["t:x"]["at"] = "2020-01-01T00:00:00+00:00"
+        self.store.shopping_marks["f:cumin"]["at"] = "2020-01-01T00:00:00+00:00"
+        self.assertEqual(set(self.store.shopping_marks_now()), {"f:cumin"})   # sticky survives
+        self.store.set_shopping_mark("f:cumin", None)
+        self.assertEqual(self.store.shopping_marks_now(), {})
 
 
 if __name__ == "__main__":

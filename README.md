@@ -239,6 +239,12 @@ title: Unpack        # optional
 notes: Ocado         # optional, saved on items that came from a line
 ```
 
+For foods whose amount is tracked, a **How much** box is filled in before you
+pick a place: the scanned product's size from Open Food Facts, a size in the
+product's or line's name (`400g`, `4 x 400g`, `4 Jacket Potatoes`) or the
+food's usual pack size. Change it (in the food's unit or a sensible other one —
+`4` each potatoes are kept as grams) when it's wrong.
+
 A line's description may hold JSON — `{"name": "<product title>", "qty": 2,
 "location": "auto", "ordered": "<original, for a substitute>"}`; otherwise
 the summary (`2 × Product`) is used. Live scanning needs HTTPS.
@@ -254,7 +260,9 @@ with `{mealplan_id, slug, name, entry_type, date}` — for example one that
 passes the recipe's ingredients to `fridge_assistant.consume_ingredients` —
 and **Print label**, where you pick how many portions (containers) and
 Freezer or Fridge; the cooked meal is added as a dish with that many portions
-and a sticker is printed for each. Loose ingredients on the plan (notes such
+and a sticker is printed for each. A **What's going in** box names the
+container — change it when only part of the meal is frozen ("Carbonara
+sauce"); it's remembered per recipe for next time. Loose ingredients on the plan (notes such
 as "Avocado") get an **Eaten** button, which takes it out of stock with
 `consume_ingredients`: the amount at the start of the note ("40 g cannellini
 beans", "½ avocado", "1 tin chickpeas"), or one "each" (converted through the
@@ -274,6 +282,28 @@ label_location: freezer           # optional, Print label's default (or fridge)
 ```
 
 Pictures load straight from Mealie, so the browser has to reach `mealie_url`.
+
+## Shopping list card
+
+The coming week's Mealie meal plan as a shopping list in three sections:
+**Need** (what the recipes use that stock doesn't cover, in the recipe's
+measures), **Added** (in the basket) and **Have** (covered by stock, or
+marked). Ingredients are summed per ingredient template in its unit, so two
+recipes needing a pepper each with one in stock show 1 under Need and 1
+under Have. Tap an ingredient for the meals it's for and **Added** / **Have**
+buttons. Meals already made are left out, and loose ingredients on the plan
+count too. Marks are shared through Fridge Assistant: marking an untracked
+ingredient (a spice) as Have lasts until undone; others lapse after a week.
+
+```yaml
+type: custom:fridge-assistant-shopping-card
+mealie_entry: 01ABC...            # optional, the Mealie config entry
+todo_entity: todo.planned_meals   # optional, where made meals are recorded
+ignore: [water]                   # optional, foods never listed
+```
+
+`fridge_assistant/stock_check` (websocket) does the sums for any list of
+recipe lines.
 
 ## Amounts and recipe ingredients
 

@@ -21,6 +21,12 @@
  * "total" (the ordered quantity), keeps "qty" as what's left to put away and
  * records each placement in "placed": [{"id", "name", "location", "qty"}].
  *
+ * When the product's food tracks amounts, a "How much" box is filled in from
+ * the scanned product's size, a size in its name ("400g", "4 x 400g",
+ * "4 Jacket Potatoes") or the usual pack size, and can be changed (in the
+ * food's own unit or a sensible other one: 4 potatoes, 0.2 kg) before
+ * picking where it goes.
+ *
  * The delivery entity's state is the window start (a timestamp); its
  * "delivery_window" attribute ("20:00 - 21:00") gives the end.
  */
@@ -72,6 +78,35 @@ function parseLine(item) {
 }
 
 function pad(n) { return String(n).padStart(2, "0"); }
+
+const UNIT_NAMES = { kg: "kg", g: "g", gram: "g", grams: "g", ml: "ml", cl: "cl", l: "l", litre: "l", litres: "l", liter: "l", liters: "l", ltr: "l" };
+
+/* A pack size from a barcode's product data or a product title: "4 x 400g"
+ * -> {quantity: 1600, unit: "g"}, "1L" -> 1 l, "M&S 4 Jacket Potatoes" or
+ * "Pack of 6" -> 4 / 6 each. */
+function parseSize(text) {
+  const t = String(text || "").toLowerCase().replace(/(\d),(\d)/g, "$1.$2");
+  let m = /(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(kg|g|ml|cl|l|litres?|liters?|ltr)\b/.exec(t);
+  if (m) return { quantity: Number(m[1]) * Number(m[2]), unit: UNIT_NAMES[m[3]] };
+  m = /(\d+(?:\.\d+)?)\s*(kg|g|grams?|ml|cl|l|litres?|liters?|ltr)\b/.exec(t);
+  if (m) return { quantity: Number(m[1]), unit: UNIT_NAMES[m[2]] };
+  m = /pack of (\d+)\b/.exec(t) || /(?:^|\s)(\d{1,2})\s+(?:pack\s+)?[a-z]/.exec(t);
+  if (m && Number(m[1]) > 1 && Number(m[1]) <= 30) return { quantity: Number(m[1]), unit: "each" };
+  return null;
+}
+
+/* Units an amount for this template can be typed in. */
+function amountUnits(tpl) {
+  const unit = tpl.amount_unit;
+  const per = Object.keys(tpl.per || {});
+  const family = (u) => (u === "g" || u === "kg" ? ["g", "kg"] : u === "ml" || u === "l" ? ["ml", "l"] : [u]);
+  const out = [...family(unit)];
+  for (const k of per) {
+    if (["g", "ml"].includes(k)) out.push(...family(k));
+    else if (["each", "can", "tin", "pot", "block", "pack", "bottle", "jar"].includes(k)) out.push(k);
+  }
+  return [...new Set(out)];
+}
 
 /* Delivery window from the delivery entity: {start, end} as Dates, or null. */
 function deliveryWindow(stateObj) {
@@ -223,6 +258,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     this._renderSel();
     this._renderList();
     this._sel.suggested = await this._lineLocation(line);
+    await this._guessAmount(this._sel);
     this._renderSel();
     this.shadowRoot.getElementById("sel").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -270,6 +306,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         known: !!known,
         photo: (known && known.photo) || (product && product.photo) || "",
         brand: (product && product.brand) || "",
+        size: (product && product.quantity) || "",
       } : null,
       qty: line ? line.qty : 1,
       suggested: null,
@@ -283,8 +320,37 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const sugProd = !sugLine && name ? ((await this._match(name)) || {}).location : null;
     if (this._sel && this._sel.barcode === code) {
       this._sel.suggested = sugLine || sugProd || null;
+      await this._guessAmount(this._sel);
       this._renderSel();
     }
+  }
+
+  /* Best guess of how much one pack holds, for the amount box: the scanned
+   * product's size, else a size in the product's or line's name, else the
+   * template's usual pack size. Only for foods whose amount is tracked. */
+  async _guessAmount(sel) {
+    if (!sel) return;
+    const name = (sel.line && sel.line.name) || (sel.product && sel.product.name) || "";
+    const res = name ? await this._match(name) : null;
+    const tpl = res && res.template && res.template.amount_unit ? res.template : null;
+    if (sel !== this._sel) return;
+    sel.tpl = tpl;
+    sel.amountTouched = false;
+    if (!tpl) { sel.per = null; return; }
+    const units = amountUnits(tpl);
+    const fits = (g) => g && units.includes(g.unit) ? g : null;
+    sel.per = fits(parseSize(sel.product && sel.product.size))
+      || fits(parseSize(sel.product && sel.product.name))
+      || fits(parseSize(sel.line && sel.line.name))
+      || (tpl.pack_amount ? { quantity: Number(tpl.pack_amount), unit: tpl.amount_unit } : null);
+    sel.amountUnit = sel.per ? sel.per.unit : tpl.amount_unit;
+    this._syncAmount(sel);
+  }
+
+  _syncAmount(sel) {
+    if (!sel || sel.amountTouched) return;
+    const q = sel.per ? sel.per.quantity * Math.max(1, Number(sel.qty) || 1) : null;
+    sel.amount = q == null ? "" : String(Math.round(q * 100) / 100);
   }
 
   async _place(location) {
@@ -309,6 +375,11 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (sel.product && sel.product.known) item.name = sel.product.name;
     if (sel.barcode) item.barcode = sel.barcode;
     if (sel.product && sel.product.photo) item.photo = sel.product.photo;
+    const amount = Number(sel.amount);
+    if (sel.tpl && sel.amount !== "" && amount > 0) {
+      item.amount = amount;
+      item.amount_unit = sel.amountUnit || sel.tpl.amount_unit;
+    }
 
     this._busy = true;
     this._renderSel();
@@ -322,7 +393,8 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         }]);
         await this._saveLine(line, { qty: left, placed });
       }
-      this._status(`✓ ${added ? added.name : contents}${qty > 1 ? ` ×${qty}` : ""} → ${LOCATION_LABEL[location]}`
+      const amt = item.amount ? ` (${item.amount} ${item.amount_unit === "each" ? "" : item.amount_unit})`.replace(" )", ")") : "";
+      this._status(`✓ ${added ? added.name : contents}${qty > 1 ? ` ×${qty}` : ""}${amt} → ${LOCATION_LABEL[location]}`
         + (added && added.code ? ` (label ${added.code})` : ""));
       const again = sel.fromCamera;
       this._sel = null;
@@ -493,6 +565,11 @@ class FridgeAssistantUnpackCard extends HTMLElement {
           background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color); }
         .qty { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
         .qty button { padding: 4px 14px; font-size: 18px; }
+        .amt { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+        .amt label { flex: 1 1 auto; color: var(--secondary-text-color); font-size: 14px; }
+        .amt input { width: 90px; font: inherit; padding: 8px 10px; border-radius: 10px; text-align: right;
+          border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+        .amt select { margin-top: 0; }
         .locs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 12px; }
         @media (min-width: 560px) { .locs { grid-template-columns: repeat(4, 1fr); } }
         .loc { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 16px 8px; font-weight: 600; }
@@ -545,6 +622,9 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     });
     root.addEventListener("click", (e) => this._onClick(e));
     root.addEventListener("change", (e) => this._onChange(e));
+    root.addEventListener("input", (e) => {
+      if (e.target.id === "amt" && this._sel) { this._sel.amount = e.target.value; this._sel.amountTouched = true; }
+    });
     this._renderAll();
   }
 
@@ -560,21 +640,28 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     } else if (act === "loc") this._place(el.dataset.loc);
     else if (act === "undo" && this._sel && this._sel.line) this._undo(this._sel.line, Number(el.dataset.i));
     else if (act === "cancel") { this._sel = null; this._status(""); this._renderSel(); this._renderList(); }
-    else if (act === "minus" && this._sel) { this._sel.qty = Math.max(1, this._sel.qty - 1); this._renderSel(); }
+    else if (act === "minus" && this._sel) { this._sel.qty = Math.max(1, this._sel.qty - 1); this._syncAmount(this._sel); this._renderSel(); }
     else if (act === "plus" && this._sel) {
       const max = this._sel.line ? this._sel.line.qty : 99;
       this._sel.qty = Math.min(max, this._sel.qty + 1);
+      this._syncAmount(this._sel);
       this._renderSel();
     }
   }
 
   async _onChange(e) {
+    if (e.target.id === "amtunit" && this._sel) {
+      this._sel.amountUnit = e.target.value;
+      this._sel.amountTouched = true;
+      return;
+    }
     if (e.target.id !== "pick" || !this._sel) return;
     const line = this._lines.find((l) => l.uid === e.target.value) || null;
     this._sel.line = line;
     this._sel.qty = line ? line.qty : 1;
     this._sel.suggested = line ? await this._lineLocation(line)
       : (this._sel.product ? ((await this._match(this._sel.product.name)) || {}).location : null);
+    await this._guessAmount(this._sel);
     this._renderSel();
     this._renderList();
   }
@@ -669,6 +756,13 @@ class FridgeAssistantUnpackCard extends HTMLElement {
           <button data-act="minus" ${sel.qty <= 1 ? "disabled" : ""}>−</button>
           <span>${sel.qty}${line ? ` of ${line.qty} left` : ""}</span>
           <button data-act="plus" ${sel.qty >= max ? "disabled" : ""}>+</button>
+        </div>` : ""}
+      ${open && sel.tpl ? `
+        <div class="amt">
+          <label for="amt">How much</label>
+          <input id="amt" type="number" inputmode="decimal" min="0" step="any" value="${esc(sel.amount || "")}" placeholder="?">
+          <select id="amtunit" aria-label="Unit">${amountUnits(sel.tpl).map((u) =>
+            `<option value="${esc(u)}"${u === sel.amountUnit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
         </div>` : ""}
       ${open ? `<div class="locs">
         ${LOCATIONS.map((l) => `

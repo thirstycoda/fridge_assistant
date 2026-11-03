@@ -1609,6 +1609,10 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
         .head { display: flex; align-items: center; gap: 8px; }
         .title { font-size: 20px; font-weight: 600; flex: 1 1 auto; }
         .sub { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }
+        .mealie { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; padding: 6px 12px;
+          border-radius: 18px; background: var(--primary-color); color: var(--text-primary-color, #fff);
+          text-decoration: none; font-size: 14px; font-weight: 500; white-space: nowrap; }
+        .mealie ha-icon { --mdc-icon-size: 18px; }
         .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; padding: 6px; }
         .days { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
         .days > .past { opacity: .6; }
@@ -1666,7 +1670,11 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     const which = `${weekName(w.start, this._config.week_start)} · `;
     const meals = (this._plan || []).filter((e) => e.recipe).length;
     const count = this._plan ? ` · ${meals} meal${meals === 1 ? "" : "s"}` : "";
+    // Mealie's planner, editing this same week.
+    const base = String(this._config.mealie_url).replace(/\/+$/, "");
+    const planUrl = `${base}/household/mealplan/planner/edit?start=${isoDate(w.start)}&end=${isoDate(w.end)}`;
     root.getElementById("bar").innerHTML = `<div class="head"><div class="title">${esc(this._config.title)}</div>
+      <a class="mealie" href="${esc(planUrl)}" target="_blank" rel="noopener"><ha-icon icon="mdi:calendar-edit"></ha-icon>Plan in Mealie</a>
       <button class="refresh" data-act="prev" title="Week before"><ha-icon icon="mdi:chevron-left"></ha-icon></button>
       <button class="refresh" data-act="next" title="Week after"><ha-icon icon="mdi:chevron-right"></ha-icon></button>
       <button class="refresh" data-act="refresh" title="Refresh"><ha-icon icon="mdi:refresh"></ha-icon></button></div>

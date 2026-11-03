@@ -293,7 +293,10 @@ true` — only just enough, going off before it's used, or not checked for a
 month), **Have** and **Added** (in the basket). **Still there** on a Check row
 confirms the amount (or corrects it) through `fridge_assistant/confirm_stock`.
 Recipes that need tidying in Mealie (lines it couldn't read) are listed at
-the top. Ingredients are summed per ingredient template in its unit, so two
+the top. Within each section ingredients are grouped into supermarket aisles
+(from Mealie's food labels, else Fridge Assistant's category) with a
+thumbnail: the product photo from the last pack scanned, else the food's
+emoji. A bar shows how much of the shop is in the basket. Ingredients are summed per ingredient template in its unit, so two
 recipes needing a pepper each with one in stock show 1 under Need and 1
 under Have. Tap an ingredient for the meals it's for and **Added** / **Have**
 buttons. Meals already made are left out, and loose ingredients on the plan

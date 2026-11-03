@@ -315,6 +315,14 @@ class TestStockCheck(unittest.TestCase):
         res = self.store.confirm_stock(tpl["id"], 1200, "g")      # more: added to the fullest
         self.assertEqual(self.store.items[b["id"]]["amount"], 1200)
 
+    def test_display_fields(self):
+        self.add("Plain flour", photo="https://img/flour.jpg")
+        g = self.groups([{"food": "plain flour", "quantity": 1, "unit": "g", "label": "Baking"},
+                         {"food": "cumin", "quantity": 1, "unit": "tsp", "label": "Herbs & Spices"}])
+        self.assertEqual((g["Plain flour"]["label"], g["Plain flour"]["photo"]), ("Baking", "https://img/flour.jpg"))
+        self.assertEqual(g["Cumin"]["label"], "Herbs & Spices")
+        self.assertIsNone(g["Cumin"]["photo"])
+
     def test_marks(self):
         self.store.set_shopping_mark("t:x", "added")
         self.store.set_shopping_mark("f:cumin", "have", sticky=True)

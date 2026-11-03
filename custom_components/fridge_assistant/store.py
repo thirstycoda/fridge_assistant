@@ -1108,7 +1108,10 @@ class FridgeStore:
                 "key": key, "name": name, "template_id": (template or {}).get("id"),
                 "tracked": template is not None, "unit": amount_unit,
                 "need": 0.0, "other": {}, "to_taste": False, "sources": [], "until": None,
+                "label": None,
             })
+            if not group["label"] and line.get("label"):
+                group["label"] = line["label"]
             group["sources"].append({
                 "source": line.get("source"), "food": food,
                 "quantity": qty or None, "unit": unit, "date": line.get("date"),
@@ -1155,8 +1158,24 @@ class FridgeStore:
             group["pack_amount"] = (template or {}).get("pack_amount")
             group["per"] = sorted(((template or {}).get("per") or {}).keys())
             group["check"] = self._check_reasons(template, items, group) if template and items else []
+            # For showing it: the template's category and emoji, and a photo
+            # of the product we last had (an item in stock, else history).
+            group["category"] = (template or {}).get("category")
+            group["emoji"] = (template or {}).get("emoji")
+            group["photo"] = self._template_photo(template["id"], items) if template else None
             out.append(group)
         return sorted(out, key=lambda g: g["name"].lower())
+
+    def _template_photo(self, template_id: str, items: list[dict[str, Any]]) -> str | None:
+        """A product photo for a template: from stock, else the latest one gone."""
+        for item in sorted(items, key=lambda i: i.get("created_at") or "", reverse=True):
+            if item.get("photo"):
+                return item["photo"]
+        for event in self.history:
+            snap = event.get("item") or {}
+            if snap.get("template_id") == template_id and snap.get("photo"):
+                return snap["photo"]
+        return None
 
     # How long a look at the cupboard counts, and when stock is "old news".
     CHECK_FRESH_DAYS = 7

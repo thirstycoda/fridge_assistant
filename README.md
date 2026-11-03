@@ -285,7 +285,7 @@ Pictures load straight from Mealie, so the browser has to reach `mealie_url`.
 
 ## Shopping list card
 
-The coming week's Mealie meal plan as a shopping list in three sections:
+A week of the Mealie meal plan as a shopping list in three sections:
 **Need** (what the recipes use that stock doesn't cover, in the recipe's
 measures), **Added** (in the basket) and **Have** (covered by stock, or
 marked). Ingredients are summed per ingredient template in its unit, so two
@@ -300,7 +300,12 @@ type: custom:fridge-assistant-shopping-card
 mealie_entry: 01ABC...            # optional, the Mealie config entry
 todo_entity: todo.planned_meals   # optional, where made meals are recorded
 ignore: [water]                   # optional, foods never listed
+week_start: saturday              # optional, the plan's weeks start on this day
+plan_day: thursday                # optional, from this day the coming week shows
 ```
+
+The list covers one plan week (from today, for the week in progress), with
+arrows to look at the week before or after.
 
 `fridge_assistant/stock_check` (websocket) does the sums for any list of
 recipe lines.

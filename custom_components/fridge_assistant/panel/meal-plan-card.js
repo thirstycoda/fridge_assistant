@@ -125,6 +125,30 @@ function fetchPlan(hass, configuredEntry, force = false) {
   return promise;
 }
 
+/* A plan for any range (the shopping list's week), not shared. */
+function fetchPlanRange(hass, configuredEntry, startISO, endISO) {
+  return mealieEntryId(hass, configuredEntry).then((entry) => hass.callWS({
+    type: "call_service", domain: "mealie", service: "get_mealplan",
+    service_data: { config_entry_id: entry, start_date: startISO, end_date: endISO },
+    return_response: true,
+  })).then((res) => (res && res.response && res.response.mealplan) || []);
+}
+
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+/* The shopping week: weeks start on `weekStart`; from `planDay` on, the
+ * coming week is shown (it's been planned), before that the current one. */
+function shoppingWeek(weekStart, planDay, offset = 0) {
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const ws = Math.max(0, WEEKDAYS.indexOf(String(weekStart).toLowerCase()));
+  const pd = Math.max(0, WEEKDAYS.indexOf(String(planDay).toLowerCase()));
+  const into = (today.getDay() - ws + 7) % 7;           // days since the week began
+  let start = addDays(today, -into);
+  if (into >= (pd - ws + 7) % 7 && (pd - ws + 7) % 7 !== 0) start = addDays(start, 7);
+  start = addDays(start, offset * 7);
+  return { start, end: addDays(start, 6), today };
+}
+
 function dayLabel(offset, date) {
   if (offset === 0) return "Today";
   if (offset === 1) return "Tomorrow";
@@ -600,6 +624,8 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
  *   mealie_entry: 01ABC...           # optional, the Mealie config entry
  *   todo_entity: todo.planned_meals  # meals already made are left out
  *   ignore: [water]                  # foods never put on the list
+ *   week_start: saturday             # the plan's weeks start on this day
+ *   plan_day: thursday               # from this day on, show the coming week
  */
 
 const PEPPERS = ["red pepper", "yellow pepper", "green pepper", "orange pepper", "sweet pepper", "bell pepper"];
@@ -637,7 +663,11 @@ class FridgeAssistantShoppingCard extends HTMLElement {
   static getStubConfig() { return { todo_entity: "todo.planned_meals" }; }
 
   setConfig(config) {
-    this._config = { todo_entity: "todo.planned_meals", ignore: ["water"], title: "Shopping", ...config };
+    this._config = {
+      todo_entity: "todo.planned_meals", ignore: ["water"], title: "Shopping",
+      week_start: "saturday", plan_day: "thursday", ...config,
+    };
+    this._offset = this._offset || 0;
     this._groups = this._groups || null;
     this._marks = this._marks || {};
     this._done = this._done || new Set();
@@ -700,7 +730,11 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     if (force) this._recipes.clear();
     this._render();
     try {
-      const plan = await fetchPlan(this._hass, this._config.mealie_entry, force);
+      const week = shoppingWeek(this._config.week_start, this._config.plan_day, this._offset);
+      // Days of the week already gone don't need shopping for.
+      const from = week.start < week.today ? week.today : week.start;
+      const plan = await fetchPlanRange(this._hass, this._config.mealie_entry, isoDate(from), isoDate(week.end));
+      this._week = week;
       const ignore = new Set((this._config.ignore || []).map((x) => String(x).toLowerCase()));
       const lines = [];
       const meals = [];
@@ -722,7 +756,6 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       this._groups = res.groups;
       this._marks = res.marks || {};
       this._mealCount = meals.length;
-      this._range = plan.length ? [plan.map((e) => e.mealplan_date).sort()[0], plan.map((e) => e.mealplan_date).sort().pop()] : null;
       this._error = null;
       this._loadedOnce = true;
     } catch (err) {
@@ -817,6 +850,12 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       const btn = ev.target.closest("[data-act]");
       if (!btn) return;
       if (btn.dataset.act === "refresh") { this._load(true); return; }
+      if (btn.dataset.act === "prev" || btn.dataset.act === "next") {
+        this._offset += btn.dataset.act === "next" ? 1 : -1;
+        this._groups = null; this._open = null;
+        this._load(true);
+        return;
+      }
       const group = (this._groups || []).find((g) => g.key === btn.dataset.key);
       if (!group) return;
       const rowId = `${btn.dataset.sec}|${group.key}`;
@@ -857,10 +896,15 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     if (!this.shadowRoot) return;
     const body = this.shadowRoot.getElementById("body");
     const fmtDay = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-    const sub = this._range ? `${this._mealCount} meal${this._mealCount === 1 ? "" : "s"} · ${fmtDay(this._range[0])} – ${fmtDay(this._range[1])}` : "";
+    const w = this._week || shoppingWeek(this._config.week_start, this._config.plan_day, this._offset);
+    const which = this._offset === 0 ? "" : this._offset === 1 ? "the week after · " : this._offset === -1 ? "the week before · " : "";
+    const count = this._groups ? ` · ${this._mealCount} meal${this._mealCount === 1 ? "" : "s"}` : "";
+    const sub = `${which}${fmtDay(isoDate(w.start))} – ${fmtDay(isoDate(w.end))}${count}`;
     const head = `<div class="head"><div class="title">${esc(this._config.title)}</div>
+      <button class="refresh" data-act="prev" title="Week before"><ha-icon icon="mdi:chevron-left"></ha-icon></button>
+      <button class="refresh" data-act="next" title="Week after"><ha-icon icon="mdi:chevron-right"></ha-icon></button>
       <button class="refresh" data-act="refresh" title="Refresh"><ha-icon icon="mdi:refresh"></ha-icon></button></div>
-      ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}`;
+      <div class="sub">${esc(sub)}</div>`;
     if (!this._groups) {
       body.innerHTML = head + (this._error ? `<div class="err">${esc(this._error)}</div>` : `<div class="empty">Loading…</div>`);
       return;

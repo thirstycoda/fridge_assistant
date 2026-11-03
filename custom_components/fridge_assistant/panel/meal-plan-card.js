@@ -633,9 +633,10 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
 
 /* ---- Shopping list card ---------------------------------------------------
  *
- * The coming week's meal plan as a shopping list in three sections:
- * Need (what the recipes use and stock doesn't cover), Added (in the basket)
- * and Have (covered by stock, or marked as had). Tap an ingredient to see the
+ * A week's meal plan as a shopping list in four sections: Need (what the
+ * recipes use and stock doesn't cover), Check (stock covers it, but it's
+ * worth a look: opened, a guessed amount, used day to day, only just enough,
+ * may go off, or not checked for a month), Have, and Added (in the basket). Tap an ingredient to see the
  * meals it's for and move it between sections. Have asks how much there is
  * and where, and adds it to Fridge Assistant (setting the food up when it
  * isn't tracked yet), so stock stays the source of truth; Need on something
@@ -647,32 +648,56 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
  *   mealie_entry: 01ABC...           # optional, the Mealie config entry
  *   todo_entity: todo.planned_meals  # meals already made are left out
  *   ignore: [water]                  # foods never put on the list
+ *   mealie_url: https://mealie.example   # links to recipes that need tidying
  *   week_start: saturday             # the plan's weeks start on this day
  *   plan_day: thursday               # from this day on, show the coming week
  */
 
-const PEPPERS = ["red pepper", "yellow pepper", "green pepper", "orange pepper", "sweet pepper", "bell pepper"];
-
-/* Household rules shared with the cook script: peppers are romano peppers
- * (except in a lasagne) and vegetable stock is bouillon powder, 4 tsp a litre. */
-function recipeLines(recipe, source, ignore) {
-  const lasagna = /lasagn/i.test(recipe.name || "");
+/* A recipe's lines for the shopping list, as Mealie has them (the house
+ * rules — romano peppers, bouillon for stock — live in the recipes). */
+function recipeLines(recipe, source, date, ignore) {
   const out = [];
   for (const i of recipe.ingredients || []) {
     if (!i.food) continue;
-    let food = String(i.food.name || "").toLowerCase();
-    let unit = i.unit ? i.unit.name : "";
-    let quantity = i.quantity || 0;
-    if (PEPPERS.includes(food) && !lasagna) food = "romano pepper";
-    if (food === "vegetable stock") {
-      const u = String(unit).toLowerCase();
-      const ml = /^(ml|millilit(re|er)s?)$/.test(u) ? quantity : /^(l|lit(re|er)s?)$/.test(u) ? quantity * 1000 : 0;
-      food = "vegetable bouillon powder"; unit = "teaspoon"; quantity = ml ? Math.max(Math.round(ml / 1000 * 4), 1) : 0;
-    }
+    const food = String(i.food.name || "").toLowerCase();
     if (ignore.has(food)) continue;
-    out.push({ food, quantity, unit, source });
+    out.push({ food, quantity: i.quantity || 0, unit: i.unit ? i.unit.name : "", source, date });
   }
   return out;
+}
+
+/* What in a recipe needs tidying in Mealie for the list to be right:
+ * lines Mealie couldn't read, and the house rules (romano peppers except in
+ * a lasagne; bouillon powder and water instead of vegetable stock). */
+const OTHER_PEPPERS = ["red pepper", "yellow pepper", "green pepper", "orange pepper", "sweet pepper", "bell pepper"];
+function recipeIssues(recipe) {
+  const issues = [];
+  const lasagna = /lasagn/i.test(recipe.name || "");
+  for (const i of recipe.ingredients || []) {
+    const text = String(i.original_text || i.note || i.display || "").trim();
+    if (!i.food) {
+      if (text && !/^could not detect/i.test(text)) issues.push(`couldn't read “${text}”`);
+      continue;
+    }
+    const food = String(i.food.name || "").toLowerCase();
+    if (!lasagna && OTHER_PEPPERS.includes(food)) issues.push(`“${food}” — you use romano peppers`);
+    if (food === "vegetable stock") issues.push("vegetable stock — you use bouillon powder and water (4 tsp a litre)");
+  }
+  return [...new Set(issues)];
+}
+
+const CHECK_TEXT = {
+  expires: "may go off before it's used",
+  untracked: "amount isn't tracked",
+  guessed: "amount is the usual pack size, never checked",
+  opened: "opened",
+  everyday: "used day to day too",
+  tight: "only just enough",
+  stale: "not checked for a month",
+};
+function checkText(g) {
+  const parts = (g.check || []).map((r) => CHECK_TEXT[r] || r);
+  return parts.length ? `Worth a look: ${parts.join(" · ")}` : "";
 }
 
 function amountText(quantity, unit) {
@@ -772,21 +797,25 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       const ignore = new Set((this._config.ignore || []).map((x) => String(x).toLowerCase()));
       const lines = [];
       const meals = [];
+      const warnings = [];
       for (const e of plan) {
         if (this._done.has(String(e.mealplan_id))) continue;
         const day = new Date(`${e.mealplan_date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" });
         if (e.recipe) {
           meals.push(e);
           const recipe = await this._recipe(e.recipe.slug);
-          lines.push(...recipeLines(recipe, `${recipe.name} · ${day}`, ignore));
+          lines.push(...recipeLines(recipe, `${recipe.name} · ${day}`, e.mealplan_date, ignore));
+          const issues = recipeIssues(recipe);
+          if (issues.length && !warnings.some((w) => w.slug === recipe.slug)) warnings.push({ name: recipe.name, slug: recipe.slug, issues });
         } else if (["breakfast", "lunch", "dinner"].includes(e.entry_type) && e.title) {
           const a = parseAmount(e.title);
           if (!ignore.has(a.food.toLowerCase())) {
-            lines.push({ food: a.food.toLowerCase(), quantity: a.quantity, unit: a.unit === "each" ? "" : a.unit, source: `${e.title} · ${day}` });
+            lines.push({ food: a.food.toLowerCase(), quantity: a.quantity, unit: a.unit === "each" ? "" : a.unit, source: `${e.title} · ${day}`, date: e.mealplan_date });
           }
         }
       }
       this._lines = lines;
+      this._warnings = warnings;
       this._mealCount = meals.length;
       await this._restock(true);
       this._error = null;
@@ -880,6 +909,25 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     }
   }
 
+  /* Looked in the cupboard: what's there is right (or this much). */
+  async _confirm(group) {
+    const f = this._form || {};
+    const amount = f.amount === "" || f.amount == null ? null : Number(f.amount);
+    this._busy = true; this._render();
+    try {
+      const msg = { type: "fridge_assistant/confirm_stock", template_id: group.template_id };
+      if (group.unit && amount != null && !Number.isNaN(amount)) { msg.amount = amount; msg.unit = f.unit || group.unit; }
+      await this._hass.callWS(msg);
+      this._notice = { key: group.key, text: `${group.name}: checked` };
+      this._form = null; this._open = null;
+      await this._restock();
+    } catch (err) {
+      this._notice = { key: group.key, text: `Couldn't save it: ${err.message || err}`, bad: true };
+    } finally {
+      this._busy = false; this._render();
+    }
+  }
+
   async _mark(group, state) {
     try {
       const res = await this._hass.callWS({
@@ -896,7 +944,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
 
   /* Split every group into its Need / Added / Have rows. */
   _rows() {
-    const need = []; const added = []; const have = [];
+    const need = []; const check = []; const have = []; const added = [];
     for (const g of this._groups || []) {
       const mark = this._marks[g.key];
       const other = Object.entries(g.other || {}).map(([u, q]) => amountText(q, u)).filter(Boolean);
@@ -921,9 +969,9 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       const stock = g.stock != null ? amountText(g.stock, g.unit) || "none" : "";
       if (mark && mark.state === "have") { have.push({ g, text: total, marked: true, stock }); continue; }
       if (missing) (mark && mark.state === "added" ? added : need).push({ g, text: missing, stock });
-      if (covered) have.push({ g, text: covered, stock });
+      if (covered) (g.check && g.check.length ? check : have).push({ g, text: covered, stock });
     }
-    return { need, added, have };
+    return { need, check, have, added };
   }
 
   _build() {
@@ -957,6 +1005,14 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .btns button.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
         .btns ha-icon { --mdc-icon-size: 18px; }
         .empty { color: var(--secondary-text-color); font-size: 14px; padding: 6px 2px; }
+        .why { font-size: 13px; color: var(--warning-color, #c77700); margin-top: 6px; }
+        .warn { margin-top: 12px; padding: 8px 12px; border-radius: 12px; font-size: 14px;
+          background: rgba(255, 152, 0, .12); }
+        .warn summary { cursor: pointer; display: flex; align-items: center; gap: 6px; }
+        .warn ha-icon { --mdc-icon-size: 18px; color: var(--warning-color, #c77700); }
+        .wrec { margin-top: 8px; }
+        .wrec a { color: var(--primary-color); font-weight: 500; }
+        .wrec ul { margin: 4px 0 0; padding-left: 18px; color: var(--secondary-text-color); }
         .haveform { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--secondary-background-color); }
         .amtrow { display: flex; align-items: center; gap: 8px; font-size: 14px; }
         .amtrow span { flex: 1 1 auto; }
@@ -987,6 +1043,9 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     };
     body.addEventListener("input", onField);
     body.addEventListener("change", onField);
+    body.addEventListener("toggle", (ev) => {
+      if (ev.target.classList && ev.target.classList.contains("warn")) this._warnOpen = ev.target.open;
+    }, true);
     body.addEventListener("click", (ev) => {
       const btn = ev.target.closest("[data-act]");
       if (!btn) return;
@@ -1008,6 +1067,11 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       else if (btn.dataset.act === "cancelhave") { this._form = null; this._render(); }
       else if (btn.dataset.act === "need") this._mark(group, null);
       else if (btn.dataset.act === "gone") this._backToNeed(group);
+      else if (btn.dataset.act === "still") {
+        this._form = { key: group.key, amount: group.stock != null ? String(group.stock) : "", unit: group.unit };
+        this._notice = null;
+        this._render();
+      } else if (btn.dataset.act === "confirm") this._confirm(group);
     });
   }
 
@@ -1026,14 +1090,17 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         `<button data-act="${act}" data-key="${k}" data-sec="${sec}" class="${primary ? "primary" : ""}"><ha-icon icon="${icon}"></ha-icon>${label}</button>`;
       let btns = "";
       if (sec === "need") btns = b("added", "Added", "mdi:basket-plus-outline", true) + b("have", "Have", "mdi:check");
+      else if (sec === "check") btns = b("still", "Still there", "mdi:check", true) + (g.unit && g.have > 0 ? b("gone", "Need", "mdi:cart-arrow-down") : "");
       else if (sec === "added") btns = b("have", "Have", "mdi:check") + b("need", "Back to Need", "mdi:undo");
       else if (row.marked) btns = b("need", "Back to Need", "mdi:undo");
       else if (g.unit && g.have > 0) btns = b("gone", "Need", "mdi:cart-arrow-down");
       const stock = row.stock ? `<div class="stockline">In stock: ${esc(row.stock)}</div>` : "";
-      const gone = sec === "have" && !row.marked && g.unit && g.have > 0
+      const why = sec === "check" && g.check ? `<div class="why">${esc(checkText(g))}</div>` : "";
+      const gone = (sec === "have" || sec === "check") && !row.marked && g.unit && g.have > 0
         ? `<div class="stockline">Need takes ${esc(amountText(g.have, g.unit))} out of Fridge Assistant.</div>` : "";
-      const form = this._form && this._form.key === g.key && sec !== "have" ? this._haveFormHtml(g, sec) : "";
-      detail = `<div class="detail"><div class="meals">${meals}</div>${stock}${gone}${form || (btns ? `<div class="btns">${btns}</div>` : "")}</div>`;
+      const form = this._form && this._form.key === g.key && (sec === "need" || sec === "added") ? this._haveFormHtml(g, sec)
+        : this._form && this._form.key === g.key && sec === "check" ? this._stillFormHtml(g, sec) : "";
+      detail = `<div class="detail"><div class="meals">${meals}</div>${why}${stock}${gone}${form || (btns ? `<div class="btns">${btns}</div>` : "")}</div>`;
     }
     const note = this._notice && this._notice.key === g.key
       ? `<div class="notice ${this._notice.bad ? "bad" : ""}">${esc(this._notice.text)}</div>` : "";
@@ -1041,6 +1108,27 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       <button class="line" data-act="toggle" data-key="${k}" data-sec="${sec}" aria-expanded="${open}">
         <span class="n">${esc(g.name)}</span><span class="a">${esc(row.text)}</span>
       </button>${detail}</div>`;
+  }
+
+  _recipeLink(slug) {
+    const base = String(this._config.mealie_url || "").replace(/\/+$/, "");
+    return base ? `${base}/g/${encodeURIComponent(this._config.group || "home")}/r/${encodeURIComponent(slug)}` : "#";
+  }
+
+  _stillFormHtml(g, sec) {
+    const f = this._form;
+    const k = esc(g.key);
+    const units = g.unit ? this._unitsFor(g) : [];
+    return `<div class="haveform">
+      ${g.unit ? `<div class="amtrow"><span>How much is there?</span>
+        <input data-field="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(f.amount)}">
+        <select data-field="unit">${units.map((u) => `<option value="${esc(u)}"${u === f.unit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
+      </div>` : ""}
+      <div class="btns">
+        <button class="primary" data-act="confirm" data-key="${k}" data-sec="${sec}" ${this._busy ? "disabled" : ""}><ha-icon icon="mdi:check"></ha-icon>That's right</button>
+        <button data-act="cancelhave" data-key="${k}" data-sec="${sec}">Cancel</button>
+      </div>
+    </div>`;
   }
 
   _haveFormHtml(g, sec) {
@@ -1080,15 +1168,20 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       body.innerHTML = head + (this._error ? `<div class="err">${esc(this._error)}</div>` : `<div class="empty">Loading…</div>`);
       return;
     }
-    const { need, added, have } = this._rows();
+    const { need, check, have, added } = this._rows();
     const section = (key, label, rows, empty) => `<div class="sec ${key}">
       <div class="sec-h"><b>${label}</b> · ${rows.length}</div>
       ${rows.length ? rows.map((r) => this._rowHtml(key, r)).join("") : `<div class="empty">${empty}</div>`}
     </div>`;
-    body.innerHTML = head
+    const warn = (this._warnings || []).length ? `<details class="warn"${this._warnOpen ? " open" : ""}><summary><ha-icon icon="mdi:alert-outline"></ha-icon>
+        ${this._warnings.length} recipe${this._warnings.length === 1 ? "" : "s"} to tidy in Mealie, so the list is right</summary>
+        ${this._warnings.map((w) => `<div class="wrec"><a href="${esc(this._recipeLink(w.slug))}" target="_blank" rel="noopener">${esc(w.name)}</a>
+          <ul>${w.issues.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`).join("")}</details>` : "";
+    body.innerHTML = head + warn
       + section("need", "Need", need, "Nothing else to get.")
-      + section("added", "Added", added, "Nothing in the basket yet.")
+      + section("check", "Check", check, "Nothing to check.")
       + section("have", "Have", have, "Nothing from stock yet.")
+      + section("added", "Added", added, "Nothing in the basket yet.")
       + (this._error ? `<div class="err">${esc(this._error)}</div>` : "");
   }
 }
@@ -1100,5 +1193,257 @@ if (!customElements.get("fridge-assistant-shopping-card")) {
     type: "fridge-assistant-shopping-card",
     name: "Fridge Assistant shopping list",
     description: "The coming week's Mealie meal plan as Need, Added and Have.",
+  });
+}
+
+/* ---- Use it up card ---------------------------------------------------------
+ *
+ * For planning the week: what in Fridge Assistant should be used soon —
+ * going off within `days`, opened packs, cooked leftovers waiting — and the
+ * Mealie recipes that use it, best matches first (the recipes using most of
+ * those things). Recipes open in Mealie. Mealie's recipes are read once a day
+ * and kept in the browser.
+ *
+ *   type: custom:fridge-assistant-use-up-card
+ *   mealie_url: https://mealie.example
+ *   mealie_entry: 01ABC...   # optional
+ *   days: 10                 # "going off soon" means within this many days
+ */
+
+const RECIPE_INDEX_KEY = "fridge-assistant-recipe-index-v1";
+const RECIPE_INDEX_TTL = 24 * 60 * 60 * 1000;
+
+class FridgeAssistantUseUpCard extends HTMLElement {
+  static getStubConfig() { return { mealie_url: "http://mealie.local:9000", days: 10 }; }
+
+  setConfig(config) {
+    this._config = { days: 10, group: "home", title: "Use it up", ...config };
+    this._config.mealie_url = String(this._config.mealie_url || "").replace(/\/+$/, "");
+    this._state = this._state || null;
+    this._index = this._index || null;
+    if (this.shadowRoot) this._render();
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (!this.shadowRoot) this._build();
+    if (first) { this._subscribe(); this._loadIndex(); }
+  }
+
+  getCardSize() { return 6; }
+
+  getGridOptions() { return { columns: 12, min_columns: 6 }; }
+
+  connectedCallback() { if (this._hass) { this._subscribe(); } }
+
+  disconnectedCallback() {
+    if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
+  }
+
+  _subscribe() {
+    if (!this._hass || this._unsub || !this.isConnected) return;
+    this._unsub = this._hass.connection.subscribeMessage((state) => {
+      this._state = state;
+      this._match();
+    }, { type: "fridge_assistant/subscribe" }).catch((err) => {
+      this._unsub = null; this._error = err.message || String(err); this._render(); return null;
+    });
+  }
+
+  /* Every recipe's foods, read from Mealie once a day. */
+  async _loadIndex(force = false) {
+    if (!force) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(RECIPE_INDEX_KEY) || "null");
+        if (cached && Date.now() - cached.at < RECIPE_INDEX_TTL) { this._index = cached.recipes; this._match(); return; }
+      } catch (e) { /* no cache */ }
+    }
+    try {
+      const entry = await mealieEntryId(this._hass, this._config.mealie_entry);
+      const call = (service, data) => this._hass.callWS({
+        type: "call_service", domain: "mealie", service,
+        service_data: { config_entry_id: entry, ...data }, return_response: true,
+      }).then((r) => r.response);
+      const list = ((await call("get_recipes", { result_limit: 1000 })).recipes || {}).items || [];
+      const recipes = [];
+      this._progress = [0, list.length];
+      this._render();
+      const queue = [...list];
+      const worker = async () => {
+        while (queue.length) {
+          const r = queue.shift();
+          try {
+            const full = (await call("get_recipe", { recipe_id: r.slug })).recipe;
+            recipes.push({
+              slug: full.slug, name: full.name, recipe_id: full.recipe_id, image: full.image,
+              foods: [...new Set((full.ingredients || []).filter((i) => i.food).map((i) => String(i.food.name).toLowerCase()))],
+            });
+          } catch (e) { /* skip that recipe */ }
+          this._progress = [this._progress[0] + 1, list.length];
+          if (this._progress[0] % 10 === 0) this._render();
+        }
+      };
+      await Promise.all(Array.from({ length: 5 }, worker));
+      this._progress = null;
+      this._index = recipes;
+      try { localStorage.setItem(RECIPE_INDEX_KEY, JSON.stringify({ at: Date.now(), recipes })); } catch (e) { /* full */ }
+      this._match();
+    } catch (err) {
+      this._progress = null;
+      this._error = `Couldn't read the recipes: ${err.message || err}`;
+      this._render();
+    }
+  }
+
+  /* Things worth using up, and the recipes that use their foods. */
+  async _match() {
+    if (!this._state || !this._index) { this._render(); return; }
+    const days = Number(this._config.days) || 10;
+    const things = [];
+    for (const item of this._state.items || []) {
+      const reasons = [];
+      if (item.kind === "dish") {
+        const open = (item.portions || []).filter((p) => p.status === "open").length || 1;
+        reasons.push(`${open} portion${open === 1 ? "" : "s"} in the ${item.location}`);
+        things.push({ item, kind: "leftover", reasons, sort: item.days_left ?? 999 });
+        continue;
+      }
+      if (item.days_left != null && item.days_left <= days) {
+        reasons.push(item.days_left < 0 ? "past its date" : item.days_left === 0 ? "use today"
+          : `use within ${item.days_left} day${item.days_left === 1 ? "" : "s"}`);
+      }
+      if (item.amount != null && item.amount_initial && item.amount < item.amount_initial * 0.98) reasons.push("opened");
+      if (reasons.length && item.template_id) things.push({ item, kind: "ingredient", reasons, sort: item.days_left ?? 500 });
+    }
+    // Which template each recipe food is, using the same matching as recipes.
+    const key = this._index.map((r) => r.slug).join("|");
+    if (this._foodKey !== key) {
+      const lines = [];
+      for (const r of this._index) for (const food of r.foods) lines.push({ food, quantity: 0, source: r.slug });
+      try {
+        const res = await this._hass.callWS({ type: "fridge_assistant/stock_check", lines });
+        const byTemplate = new Map();
+        for (const g of res.groups) {
+          if (!g.template_id) continue;
+          byTemplate.set(g.template_id, new Set(g.sources.map((s) => s.source)));
+        }
+        this._byTemplate = byTemplate;
+        this._foodKey = key;
+      } catch (err) {
+        this._error = err.message || String(err);
+      }
+    }
+    const recipeBySlug = new Map(this._index.map((r) => [r.slug, r]));
+    for (const t of things) {
+      t.recipes = t.kind === "ingredient"
+        ? [...((this._byTemplate && this._byTemplate.get(t.item.template_id)) || [])].map((s) => recipeBySlug.get(s)).filter(Boolean)
+        : [];
+    }
+    // Recipes ranked by how many of those ingredients they'd use up.
+    const score = new Map();
+    for (const t of things) {
+      for (const r of t.recipes) {
+        const e = score.get(r.slug) || { recipe: r, uses: new Set(), soonest: 999 };
+        e.uses.add(t.item.name);
+        e.soonest = Math.min(e.soonest, t.item.days_left ?? 999);
+        score.set(r.slug, e);
+      }
+    }
+    this._best = [...score.values()].sort((a, b) => b.uses.size - a.uses.size || a.soonest - b.soonest).slice(0, 6);
+    this._things = things.sort((a, b) => a.sort - b.sort);
+    this._render();
+  }
+
+  _link(slug) {
+    return this._config.mealie_url ? `${this._config.mealie_url}/g/${encodeURIComponent(this._config.group)}/r/${encodeURIComponent(slug)}` : "#";
+  }
+
+  _image(r) {
+    return r.image && this._config.mealie_url
+      ? `${this._config.mealie_url}/api/media/recipes/${r.recipe_id}/images/min-original.webp?version=${encodeURIComponent(r.image)}` : "";
+  }
+
+  _build() {
+    const root = this.attachShadow({ mode: "open" });
+    root.innerHTML = `
+      <style>
+        ha-card { padding: 16px; }
+        .head { display: flex; align-items: center; gap: 8px; }
+        .title { font-size: 20px; font-weight: 600; flex: 1 1 auto; }
+        .sub { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }
+        .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; padding: 6px; }
+        .sec-h { margin-top: 16px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+          color: var(--secondary-text-color); font-weight: 600; }
+        .best { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-top: 8px; }
+        .rc { display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; text-decoration: none;
+          color: inherit; background: var(--secondary-background-color); }
+        .rc .img { height: 84px; background: var(--divider-color) center/cover no-repeat; }
+        .rc .t { padding: 8px 10px 2px; font-weight: 500; font-size: 14px; line-height: 1.25; }
+        .rc .u { padding: 0 10px 8px; font-size: 12px; color: var(--secondary-text-color); }
+        .thing { padding: 10px 0; border-bottom: 1px solid var(--divider-color); }
+        .thing:last-child { border-bottom: none; }
+        .tl { display: flex; align-items: baseline; gap: 10px; }
+        .tl .n { flex: 1 1 auto; font-weight: 500; }
+        .tl .w { font-size: 13px; color: var(--secondary-text-color); white-space: nowrap; }
+        .tl .w.soon { color: var(--warning-color, #c77700); }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+        .chips a { font-size: 13px; padding: 4px 10px; border-radius: 999px; text-decoration: none;
+          background: var(--secondary-background-color); color: var(--primary-text-color); }
+        .none { font-size: 13px; color: var(--secondary-text-color); margin-top: 4px; }
+        .empty { color: var(--secondary-text-color); font-size: 14px; margin-top: 12px; }
+        .err { margin-top: 12px; color: var(--error-color); font-size: 14px; }
+      </style>
+      <ha-card><div id="body"></div></ha-card>`;
+    root.getElementById("body").addEventListener("click", (ev) => {
+      if (ev.target.closest("[data-act=refresh]")) { this._index = null; this._foodKey = null; this._loadIndex(true); }
+    });
+  }
+
+  _render() {
+    if (!this.shadowRoot) return;
+    const body = this.shadowRoot.getElementById("body");
+    const head = `<div class="head"><div class="title">${esc(this._config.title)}</div>
+      <button class="refresh" data-act="refresh" title="Read the recipes again"><ha-icon icon="mdi:refresh"></ha-icon></button></div>
+      <div class="sub">What to use soon, and recipes that use it</div>`;
+    if (!this._state || !this._index || !this._things) {
+      const p = this._progress ? `Reading recipes… ${this._progress[0]} of ${this._progress[1]}` : "Loading…";
+      body.innerHTML = head + (this._error ? `<div class="err">${esc(this._error)}</div>` : `<div class="empty">${p}</div>`);
+      return;
+    }
+    if (!this._things.length) {
+      body.innerHTML = head + `<div class="empty">Nothing needs using up right now.</div>`;
+      return;
+    }
+    const best = this._best.length ? `<div class="sec-h">Good fits</div><div class="best">${this._best.map((e) => `
+      <a class="rc" href="${esc(this._link(e.recipe.slug))}" target="_blank" rel="noopener">
+        <div class="img" style="${this._image(e.recipe) ? `background-image:url('${esc(this._image(e.recipe))}')` : ""}"></div>
+        <div class="t">${esc(e.recipe.name)}</div>
+        <div class="u">Uses ${esc([...e.uses].join(", "))}</div></a>`).join("")}</div>` : "";
+    const row = (t) => {
+      const soon = t.item.days_left != null && t.item.days_left <= 3;
+      const chips = t.kind === "leftover" ? `<div class="none">Already cooked: plan it in as a meal.</div>`
+        : t.recipes.length ? `<div class="chips">${t.recipes.slice(0, 6).map((r) =>
+          `<a href="${esc(this._link(r.slug))}" target="_blank" rel="noopener">${esc(r.name)}</a>`).join("")}</div>`
+          : `<div class="none">No recipe uses it.</div>`;
+      return `<div class="thing"><div class="tl"><span class="n">${esc(t.item.name)}</span>
+        <span class="w ${soon ? "soon" : ""}">${esc(t.reasons.join(" · "))}</span></div>${chips}</div>`;
+    };
+    const leftovers = this._things.filter((t) => t.kind === "leftover");
+    const ingredients = this._things.filter((t) => t.kind === "ingredient");
+    body.innerHTML = head + best
+      + (ingredients.length ? `<div class="sec-h">Use soon</div>${ingredients.map(row).join("")}` : "")
+      + (leftovers.length ? `<div class="sec-h">Leftovers</div>${leftovers.map(row).join("")}` : "")
+      + (this._error ? `<div class="err">${esc(this._error)}</div>` : "");
+  }
+}
+
+if (!customElements.get("fridge-assistant-use-up-card")) {
+  customElements.define("fridge-assistant-use-up-card", FridgeAssistantUseUpCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "fridge-assistant-use-up-card",
+    name: "Fridge Assistant use it up",
+    description: "What to use soon from Fridge Assistant, with the Mealie recipes that use it.",
   });
 }

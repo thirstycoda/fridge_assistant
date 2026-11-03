@@ -106,6 +106,7 @@ TEMPLATE_SCHEMA = vol.Schema(
         vol.Optional("pack_amount"): vol.Any(None, vol.Coerce(float)),
         vol.Optional("per"): vol.Any(None, vol.Schema({cv.string: vol.Coerce(float)})),
         vol.Optional("density"): vol.Any(None, vol.Coerce(float)),
+        vol.Optional("everyday"): vol.Any(None, bool),
         vol.Optional("source"): cv.string,
     },
     extra=vol.REMOVE_EXTRA,
@@ -139,6 +140,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_set_shopping_mark)
     websocket_api.async_register_command(hass, ws_meal_label)
     websocket_api.async_register_command(hass, ws_stock_have)
+    websocket_api.async_register_command(hass, ws_confirm_stock)
 
 
 def _person_pictures(hass: HomeAssistant) -> dict[str, str]:
@@ -778,6 +780,7 @@ _LINE_SCHEMA = vol.Schema(
         vol.Optional("unit"): vol.Any(None, str),
         vol.Optional("template_id"): vol.Any(None, str),
         vol.Optional("source"): vol.Any(None, str),
+        vol.Optional("date"): vol.Any(None, str),
     },
     extra=vol.REMOVE_EXTRA,
 )
@@ -870,3 +873,27 @@ async def ws_stock_have(hass, connection, msg) -> None:
     by, by_name = _user_attrs(connection)
     item = await runtime.async_add_item(res["item"], by=by, by_name=by_name)
     connection.send_result(msg["id"], {"item": item, "template": res["template"]})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/confirm_stock",
+        vol.Required("template_id"): str,
+        vol.Optional("amount"): vol.Any(None, vol.Coerce(float)),
+        vol.Optional("unit"): vol.Any(None, str),
+    }
+)
+@websocket_api.async_response
+async def ws_confirm_stock(hass, connection, msg) -> None:
+    """Stock of a food was checked: it's right, or it's ``amount``."""
+    runtime = _runtime_or_error(hass, connection, msg)
+    if runtime is None:
+        return
+    by, by_name = _user_attrs(connection)
+    try:
+        res = await runtime.async_confirm_stock(msg["template_id"], msg.get("amount"), msg.get("unit"),
+                                                by=by, by_name=by_name)
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    connection.send_result(msg["id"], res)

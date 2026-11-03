@@ -339,10 +339,11 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (!tpl) { sel.per = null; return; }
     const units = amountUnits(tpl);
     const fits = (g) => g && units.includes(g.unit) ? g : null;
-    sel.per = fits(parseSize(sel.product && sel.product.size))
+    const sized = fits(parseSize(sel.product && sel.product.size))
       || fits(parseSize(sel.product && sel.product.name))
-      || fits(parseSize(sel.line && sel.line.name))
-      || (tpl.pack_amount ? { quantity: Number(tpl.pack_amount), unit: tpl.amount_unit } : null);
+      || fits(parseSize(sel.line && sel.line.name));
+    sel.sized = !!sized;   // read off the product, not the usual pack size
+    sel.per = sized || (tpl.pack_amount ? { quantity: Number(tpl.pack_amount), unit: tpl.amount_unit } : null);
     sel.amountUnit = sel.per ? sel.per.unit : tpl.amount_unit;
     this._syncAmount(sel);
   }
@@ -376,7 +377,9 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (sel.barcode) item.barcode = sel.barcode;
     if (sel.product && sel.product.photo) item.photo = sel.product.photo;
     const amount = Number(sel.amount);
-    if (sel.tpl && sel.amount !== "" && amount > 0) {
+    // Only an amount read off the product or typed in counts as known; the
+    // usual pack size is left for Fridge Assistant to guess (and to check).
+    if (sel.tpl && sel.amount !== "" && amount > 0 && (sel.amountTouched || sel.sized)) {
       item.amount = amount;
       item.amount_unit = sel.amountUnit || sel.tpl.amount_unit;
     }

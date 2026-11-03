@@ -281,6 +281,40 @@ class TestStockCheck(unittest.TestCase):
         self.assertEqual(res["template"]["amount_unit"], "ml")
         self.assertEqual(res["template"]["pack_amount"], 1000)
 
+    def test_check_reasons(self):
+        flour = self.add("Plain flour")                          # usual pack size: a guess
+        g = self.groups([{"food": "plain flour", "quantity": 200, "unit": "g", "date": "2026-11-06"}])["Plain flour"]
+        self.assertEqual(g["check"], ["guessed"])
+        self.store.update_item(flour["id"], {"amount": 1000})   # someone said how much
+        g = self.groups([{"food": "plain flour", "quantity": 900, "unit": "g"}])["Plain flour"]
+        self.assertEqual(g["check"], [])                          # checked this week wins
+        flour["amount_checked_at"] = "2026-01-01T00:00:00+00:00"
+        flour["created_at"] = "2026-01-01T00:00:00+00:00"
+        flour["expiry_date"] = "2026-11-04"
+        g = self.groups([{"food": "plain flour", "quantity": 900, "unit": "g", "date": "2026-11-06"}])["Plain flour"]
+        self.assertEqual(g["check"], ["expires", "opened", "tight", "stale"])
+
+    def test_everyday_and_untracked(self):
+        self.store.upsert_user_template({"name": "Soy milk", "amount_unit": "ml", "pack_amount": 1000, "everyday": True})
+        self.add("Soy milk", amount=1000)
+        self.store.items[next(iter(self.store.items))]["amount_checked_at"] = "2026-01-01T00:00:00+00:00"
+        self.assertIn("everyday", self.groups([{"food": "soy milk", "quantity": 100, "unit": "ml"}])["Soy milk"]["check"])
+        self.add("Coconut water")
+        self.assertEqual(self.groups([{"food": "coconut water", "quantity": 1}])["Coconut water"]["check"], ["untracked"])
+
+    def test_confirm_stock(self):
+        tpl = self.store.match_ingredient("plain flour")
+        a = self.add("Plain flour", amount=300)
+        b = self.add("Plain flour")                               # 1500, a guess
+        res = self.store.confirm_stock(tpl["id"])                 # it's right
+        self.assertEqual(res["stock"], 1800)
+        self.assertTrue(all(i.get("amount_checked_at") for i in (a, b)))
+        res = self.store.confirm_stock(tpl["id"], 1.0, "kg")      # less: opened pack goes first
+        self.assertEqual(res["stock"], 1000)
+        self.assertEqual(self.store.items[b["id"]]["amount"], 1000)
+        res = self.store.confirm_stock(tpl["id"], 1200, "g")      # more: added to the fullest
+        self.assertEqual(self.store.items[b["id"]]["amount"], 1200)
+
     def test_marks(self):
         self.store.set_shopping_mark("t:x", "added")
         self.store.set_shopping_mark("f:cumin", "have", sticky=True)

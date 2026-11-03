@@ -464,7 +464,7 @@ class FridgeStore:
         )
         # Inventory amounts: the unit stock is counted in, a pack's size in it,
         # and how recipe units convert ({"tbsp": 18, "can": 400}).
-        for key in ("amount_unit", "pack_amount", "per", "density"):
+        for key in ("amount_unit", "pack_amount", "per", "density", "everyday"):
             if key in data or key in existing:
                 tpl[key] = data.get(key, existing.get(key))
         if "opened_fridge" in data or "opened_fridge" in existing:
@@ -633,6 +633,7 @@ class FridgeStore:
         # grams) and is converted; one that can't be falls back to the guess.
         if template and template.get("amount_unit"):
             amount = data.get("amount")
+            explicit = amount is not None
             given_unit = data.get("amount_unit")
             if amount is not None and given_unit:
                 try:
@@ -640,11 +641,15 @@ class FridgeStore:
                 except (TypeError, ValueError):
                     amount = None
             if amount is None:
+                explicit = False
                 amount = initial_amount(template, data.get("quantity"))
             if amount is not None:
                 item["amount"] = round(float(amount), 2)
                 item["amount_initial"] = item["amount"]
                 item["amount_unit"] = normalize_unit(template["amount_unit"])
+                # Someone said how much (rather than the usual pack size).
+                if explicit:
+                    item["amount_checked_at"] = now.isoformat()
         return item
 
     def add_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -698,6 +703,7 @@ class FridgeStore:
                 # A manual top-up past the original resets the "full" mark.
                 if value is not None and value > (item.get("amount_initial") or 0):
                     item["amount_initial"] = value
+                item["amount_checked_at"] = dt_util.now().isoformat()
             item[key] = value
         # Linking an item to a template that knows its pack size starts tracking it.
         if "template_id" in changes and item.get("amount") is None:
@@ -1101,12 +1107,14 @@ class FridgeStore:
             group = groups.setdefault(key, {
                 "key": key, "name": name, "template_id": (template or {}).get("id"),
                 "tracked": template is not None, "unit": amount_unit,
-                "need": 0.0, "other": {}, "to_taste": False, "sources": [],
+                "need": 0.0, "other": {}, "to_taste": False, "sources": [], "until": None,
             })
             group["sources"].append({
                 "source": line.get("source"), "food": food,
-                "quantity": qty or None, "unit": unit,
+                "quantity": qty or None, "unit": unit, "date": line.get("date"),
             })
+            if line.get("date") and (group["until"] is None or line["date"] > group["until"]):
+                group["until"] = line["date"]
             if qty <= 0 or normalize_unit(unit) in NEGLIGIBLE_UNITS:
                 group["to_taste"] = True
                 continue
@@ -1146,8 +1154,97 @@ class FridgeStore:
                                  else (LOCATION_CUPBOARD if group["spoons"] else None))
             group["pack_amount"] = (template or {}).get("pack_amount")
             group["per"] = sorted(((template or {}).get("per") or {}).keys())
+            group["check"] = self._check_reasons(template, items, group) if template and items else []
             out.append(group)
         return sorted(out, key=lambda g: g["name"].lower())
+
+    # How long a look at the cupboard counts, and when stock is "old news".
+    CHECK_FRESH_DAYS = 7
+    CHECK_STALE_DAYS = 30
+
+    def _check_reasons(self, template: dict[str, Any], items: list[dict[str, Any]],
+                       group: dict[str, Any]) -> list[str]:
+        """Why stock that covers a shopping need is worth a look before
+        trusting it (empty when it can be trusted).
+
+        ``expires``: an item goes off before the last meal that needs it.
+        Unless every item was checked in the last week, also: ``untracked``
+        (no amounts kept), ``guessed`` (amount is the usual pack size, never
+        confirmed), ``opened``, ``everyday`` (used outside recipes too),
+        ``tight`` (only just enough) and ``stale`` (not looked at for a month).
+        """
+        reasons: list[str] = []
+        until = group.get("until")
+        if until and any(i.get("expiry_date") and i["expiry_date"] < until for i in items):
+            reasons.append("expires")
+        now = dt_util.now()
+
+        def checked(item: dict[str, Any]) -> datetime | None:
+            for key in ("amount_checked_at", "created_at"):
+                try:
+                    return datetime.fromisoformat(item.get(key) or "")
+                except ValueError:
+                    continue
+            return None
+
+        fresh = all((item.get("amount_checked_at") and checked(item)
+                     and now - checked(item) <= _days(self.CHECK_FRESH_DAYS)) for item in items)
+        if fresh:
+            return reasons
+        if not template.get("amount_unit"):
+            return [*reasons, "untracked"]
+        if any(not i.get("amount_checked_at") for i in items):
+            reasons.append("guessed")
+        if any(i.get("amount") is not None and i.get("amount_initial")
+               and i["amount"] < i["amount_initial"] * (1 - EMPTY_SHARE) for i in items):
+            reasons.append("opened")
+        if template.get("everyday"):
+            reasons.append("everyday")
+        stock, need = group.get("stock") or 0, group.get("need") or 0
+        if need and stock < need * 1.25:
+            reasons.append("tight")
+        last = [checked(i) for i in items]
+        if all(c is not None and now - c > _days(self.CHECK_STALE_DAYS) for c in last):
+            reasons.append("stale")
+        return reasons
+
+    def confirm_stock(self, template_id: str, amount: float | None = None,
+                      unit: str | None = None, by: str | None = None,
+                      by_name: str | None = None) -> dict[str, Any]:
+        """Someone looked: what's in stock of a template is right, or is
+        ``amount`` (``unit``, default the template's). Less than recorded is
+        taken out (opened packs first, finished ones completed as eaten);
+        more is added to the fullest pack. Every remaining item counts as
+        checked now. Returns ``{"stock", "completed"}``.
+        """
+        template = self.get_template(template_id)
+        if template is None:
+            raise ValueError(f"unknown template {template_id}")
+        items = [i for i in self.items.values() if i.get("template_id") == template_id]
+        events: list[dict[str, Any]] = []
+        if amount is not None and template.get("amount_unit"):
+            target = convert(float(amount), unit or template["amount_unit"], template)
+            if target is None:
+                raise ValueError(f"can't convert {unit} for {template.get('name')}")
+            total = sum(self._ensure_amount(i, template) or 0 for i in items)
+            diff = target - total
+            if diff < 0:
+                res = self.consume_ingredients(
+                    [{"food": template["name"], "template_id": template_id,
+                      "quantity": -diff, "unit": template["amount_unit"]}], by=by, by_name=by_name)
+                events = res["completed"]
+            elif diff > 0 and items:
+                fullest = max(items, key=lambda i: i.get("amount") or 0)
+                fullest["amount"] = round((fullest.get("amount") or 0) + diff, 2)
+                fullest["amount_initial"] = max(fullest.get("amount_initial") or 0, fullest["amount"])
+        now = dt_util.now().isoformat()
+        stock = 0.0
+        for item in self.items.values():
+            if item.get("template_id") == template_id:
+                item["amount_checked_at"] = now
+                item["updated_at"] = now
+                stock += item.get("amount") or 0
+        return {"stock": round(stock, 2), "completed": events}
 
     def stock_have(
         self,

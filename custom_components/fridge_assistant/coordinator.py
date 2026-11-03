@@ -206,6 +206,16 @@ class FridgeRuntime:
                 self._fire_completed(event)
         return result
 
+    async def async_confirm_stock(self, template_id: str, amount: float | None = None,
+                                  unit: str | None = None, by: str | None = None,
+                                  by_name: str | None = None) -> dict[str, Any]:
+        """Someone checked the cupboard (see store.confirm_stock)."""
+        result = self.store.confirm_stock(template_id, amount, unit, by=by, by_name=by_name)
+        await self.async_changed()
+        for event in result["completed"]:
+            self._fire_completed(event)
+        return result
+
     async def async_consume_portion(
         self,
         item_id: str,

@@ -285,10 +285,15 @@ Pictures load straight from Mealie, so the browser has to reach `mealie_url`.
 
 ## Shopping list card
 
-A week of the Mealie meal plan as a shopping list in three sections:
-**Need** (what the recipes use that stock doesn't cover, in the recipe's
-measures), **Added** (in the basket) and **Have** (covered by stock, or
-marked). Ingredients are summed per ingredient template in its unit, so two
+A week of the Mealie meal plan as a shopping list in four sections: **Need**
+(what the recipes use that stock doesn't cover, in the recipe's measures),
+**Check** (covered by stock, but worth a look first: opened, an amount that
+was only the usual pack size, used day to day — templates with `everyday:
+true` — only just enough, going off before it's used, or not checked for a
+month), **Have** and **Added** (in the basket). **Still there** on a Check row
+confirms the amount (or corrects it) through `fridge_assistant/confirm_stock`.
+Recipes that need tidying in Mealie (lines it couldn't read) are listed at
+the top. Ingredients are summed per ingredient template in its unit, so two
 recipes needing a pepper each with one in stock show 1 under Need and 1
 under Have. Tap an ingredient for the meals it's for and **Added** / **Have**
 buttons. Meals already made are left out, and loose ingredients on the plan
@@ -316,6 +321,19 @@ arrows to look at the week before or after.
 
 `fridge_assistant/stock_check` (websocket) does the sums for any list of
 recipe lines.
+
+## Use it up card
+
+For planning: what in Fridge Assistant should be used soon (going off within
+`days`, opened, cooked leftovers) and the Mealie recipes that use it, best
+matches first. Recipes are read from Mealie once a day and kept in the browser.
+
+```yaml
+type: custom:fridge-assistant-use-up-card
+mealie_url: https://mealie.example
+mealie_entry: 01ABC...   # optional
+days: 10                 # optional
+```
 
 ## Amounts and recipe ingredients
 

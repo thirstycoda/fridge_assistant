@@ -149,6 +149,26 @@ function shoppingWeek(weekStart, planDay, offset = 0) {
   return { start, end: addDays(start, 6), today };
 }
 
+/* When to look at the plan again: on coming back to the page, just after
+ * midnight (the day moves on) and otherwise hourly, for plan edits made in
+ * Mealie. Stock changes arrive by themselves. Returns a function that stops it. */
+function scheduleRefresh(fn) {
+  let midnight = null;
+  const atMidnight = () => {
+    const next = new Date(); next.setHours(24, 0, 30, 0);
+    midnight = setTimeout(() => { fn(); atMidnight(); }, next - Date.now());
+  };
+  atMidnight();
+  const hourly = setInterval(fn, 60 * 60 * 1000);
+  const onVisible = () => { if (document.visibilityState === "visible") fn(); };
+  document.addEventListener("visibilitychange", onVisible);
+  return () => {
+    clearTimeout(midnight);
+    clearInterval(hourly);
+    document.removeEventListener("visibilitychange", onVisible);
+  };
+}
+
 function dayLabel(offset, date) {
   if (offset === 0) return "Today";
   if (offset === 1) return "Tomorrow";
@@ -194,12 +214,12 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     planListeners.add(this._onPlan);
     if (this._hass) { this._load(); this._subscribe(); }
     // Refresh now and then, and when the date rolls over.
-    if (!this._tick) this._tick = setInterval(() => this._load(), 5 * 60 * 1000);
+    if (!this._tick) this._tick = scheduleRefresh(() => this._load());
   }
 
   disconnectedCallback() {
     planListeners.delete(this._onPlan);
-    if (this._tick) { clearInterval(this._tick); this._tick = null; }
+    if (this._tick) { this._tick(); this._tick = null; }
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
   }
 
@@ -621,7 +641,7 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
  * isn't tracked yet), so stock stays the source of truth; Need on something
  * in Have takes it back out. The list follows stock changes as they happen.
  * "Added" (in the basket) marks are shared by everyone and lapse after a
- * week. The list moves on by itself: past days drop off after midnight.
+ * week. The list moves on by itself: past days drop off just after midnight.
  *
  *   type: custom:fridge-assistant-shopping-card
  *   mealie_entry: 01ABC...           # optional, the Mealie config entry
@@ -694,11 +714,11 @@ class FridgeAssistantShoppingCard extends HTMLElement {
 
   connectedCallback() {
     if (this._hass) { this._subscribe(); this._load(); }
-    if (!this._tick) this._tick = setInterval(() => this._load(), 5 * 60 * 1000);
+    if (!this._tick) this._tick = scheduleRefresh(() => this._load());
   }
 
   disconnectedCallback() {
-    if (this._tick) { clearInterval(this._tick); this._tick = null; }
+    if (this._tick) { this._tick(); this._tick = null; }
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
     if (this._unsubFa) { this._unsubFa.then((u) => u && u()).catch(() => {}); this._unsubFa = null; }
   }

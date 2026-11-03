@@ -499,9 +499,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .actions ha-icon { --mdc-icon-size: 20px; }
         .actions button.on { border-color: var(--primary-color); color: var(--primary-color); }
         /* Mealie's look: its orange, its icon. */
-        .actions button.mealie { background: #E58325; color: #fff; border-color: transparent; border-radius: 20px; gap: 8px;
-          flex: 1 0 auto; white-space: nowrap; padding: 8px 14px 8px 8px; }
-        .actions button.mealie img { width: 20px; height: 20px; padding: 3px; border-radius: 50%; background: #fff; }
+        .actions button.mealie { background: #E58325; color: #fff; border-color: transparent; flex: 1 0 auto; white-space: nowrap; }
+        .actions button.mealie img { width: 16px; height: 16px; padding: 2px; border-radius: 50%; background: #fff; }
         .label { margin: 0 8px 10px; padding: 10px 12px; border-radius: 12px; background: var(--card-background-color);
           display: flex; flex-direction: column; gap: 10px; }
         .lrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }

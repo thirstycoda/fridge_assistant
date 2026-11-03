@@ -1615,8 +1615,10 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
         .empty { padding: 4px 16px 16px; color: var(--secondary-text-color); }
         .more { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
         .lead { margin: 0 0 12px; }
-        .more > a.plan { border: none; background: color-mix(in srgb, var(--primary-color) 70%, black); color: #fff; }
-        .more > a.plan ha-icon { color: #fff; }
+        /* Mealie's look: its orange, its icon. */
+        .more > a.plan { align-self: flex-start; width: auto; border: none; border-radius: 20px; padding: 8px 16px 8px 8px;
+          background: #E58325; color: #fff; font-size: 15px; gap: 8px; }
+        .more > a.plan img { width: 22px; height: 22px; padding: 3px; border-radius: 50%; background: #fff; }
         .more > button, .more > a { box-sizing: border-box; text-decoration: none; width: 100%; padding: 12px; border-radius: 12px; border: 1px dashed var(--divider-color);
           background: none; color: var(--primary-text-color); font: inherit; font-weight: 500; cursor: pointer;
           display: flex; align-items: center; justify-content: center; gap: 8px; }
@@ -1684,7 +1686,8 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     if (this._error) { msg.innerHTML = `<div class="err">${esc(this._error)}</div>`; return; }
     if (this._plan == null) { msg.innerHTML = `<div class="empty">Loading…</div>`; days.replaceChildren(); more.innerHTML = ""; return; }
     const planned = this._plan.length > 0;
-    const mealieBtn = `<a class="plan" href="${esc(planUrl)}" target="_blank" rel="noopener"><ha-icon icon="mdi:calendar-edit"></ha-icon>Plan in Mealie</a>`;
+    const mealieBtn = `<a class="plan" href="${esc(planUrl)}" target="_blank" rel="noopener"><img src="${esc(base)}/icons/android-chrome-192x192.png" alt=""
+      onerror="this.style.display='none'">Plan in Mealie</a>`;
     msg.innerHTML = planned ? "" : `<div class="more lead">${mealieBtn}</div>
       <div class="empty">Nothing planned for ${esc(weekName(w.start, this._config.week_start).toLowerCase())} yet. Here's what could do with using up, and recipes that use it.</div>`;
     // Day cards, reused while the week stays the same.

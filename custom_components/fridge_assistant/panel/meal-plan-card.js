@@ -490,7 +490,9 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .name small { display: block; font-weight: 400; color: var(--secondary-text-color); font-size: 13px; margin-top: 2px; }
         .made { color: var(--success-color, #43a047); --mdc-icon-size: 24px; flex: 0 0 auto; }
         .meal.is-made .name { color: var(--secondary-text-color); }
-        .actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 8px 10px; }
+        /* Open in Mealie and Made it side by side, Print label underneath. */
+        .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 8px 10px; }
+        .actions button[data-act=label], .actions button:only-child { grid-column: 1 / -1; }
         .actions button { flex: 1 1 100px; display: flex; align-items: center; justify-content: center; gap: 6px;
           font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 12px; padding: 10px 8px;
           border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
@@ -499,7 +501,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .actions ha-icon { --mdc-icon-size: 20px; }
         .actions button.on { border-color: var(--primary-color); color: var(--primary-color); }
         /* Mealie's look: its orange, its icon. */
-        .actions button.mealie { background: #E58325; color: #fff; border-color: transparent; flex: 1 0 auto; white-space: nowrap; }
+        .actions button.mealie { background: #E58325; color: #fff; border-color: transparent; white-space: nowrap; }
         .actions button.mealie img { width: 16px; height: 16px; padding: 2px; border-radius: 50%; background: #fff; }
         .label { margin: 0 8px 10px; padding: 10px 12px; border-radius: 12px; background: var(--card-background-color);
           display: flex; flex-direction: column; gap: 10px; }

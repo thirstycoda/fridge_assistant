@@ -1540,7 +1540,7 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
 
   setConfig(config) {
     if (!config || !config.mealie_url) throw new Error("Set mealie_url (e.g. http://192.168.1.10:9925)");
-    this._config = { week_start: "saturday", group: "home", todo_entity: "todo.planned_meals",
+    this._config = { title: "Meal plan", week_start: "saturday", group: "home", todo_entity: "todo.planned_meals",
       script: "script.cook_planned_meal", days: 10, ...config };
     this._offset = this._offset || 0;
     this._days = this._days || new Map();
@@ -1593,13 +1593,11 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     root.innerHTML = `
       <style>
         :host { display: block; }
-        .bar { display: flex; align-items: center; gap: 6px; padding: 4px 4px 12px; }
-        .bar .t { flex: 1 1 auto; }
-        .bar .w { font-size: 22px; font-weight: 600; }
-        .bar .d { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }
-        .bar button { background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 12px;
-          color: var(--primary-text-color); cursor: pointer; padding: 6px 10px; font: inherit; display: flex; align-items: center; gap: 4px; }
-        .bar button ha-icon { --mdc-icon-size: 22px; }
+        ha-card.bar { padding: 16px; margin-bottom: 12px; }
+        .head { display: flex; align-items: center; gap: 8px; }
+        .title { font-size: 20px; font-weight: 600; flex: 1 1 auto; }
+        .sub { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }
+        .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; padding: 6px; }
         .days { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
         .days > .past { opacity: .6; }
         .empty { padding: 4px 4px 12px; color: var(--secondary-text-color); }
@@ -1611,7 +1609,7 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
         .useup { margin-top: 12px; }
         .err { color: var(--error-color); padding: 8px 4px; }
       </style>
-      <div class="bar" id="bar"></div>
+      <ha-card class="bar" id="bar"></ha-card>
       <div id="msg"></div>
       <div class="days" id="days"></div>
       <div class="more" id="more"></div>
@@ -1619,7 +1617,8 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     root.getElementById("bar").addEventListener("click", (ev) => {
       const b = ev.target.closest("[data-act]");
       if (!b) return;
-      this._offset = b.dataset.act === "today" ? 0 : this._offset + (b.dataset.act === "next" ? 1 : -1);
+      if (b.dataset.act === "refresh") { this._load(); return; }
+      this._offset += b.dataset.act === "next" ? 1 : -1;
       this._plan = null;
       this._showIdeas = false;
       this._render();
@@ -1651,13 +1650,15 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     const root = this.shadowRoot;
     const w = this._week();
     const fmt = (d) => d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-    const name = this._offset === 0 ? "This week" : this._offset === 1 ? "Next week"
-      : this._offset === -1 ? "Last week" : this._offset > 0 ? `In ${this._offset} weeks` : `${-this._offset} weeks ago`;
-    root.getElementById("bar").innerHTML = `
-      <button data-act="prev" title="Week before"><ha-icon icon="mdi:chevron-left"></ha-icon></button>
-      <div class="t"><div class="w">${esc(name)}</div><div class="d">${esc(fmt(w.start))} – ${esc(fmt(w.end))}</div></div>
-      ${this._offset !== 0 ? `<button data-act="today">This week</button>` : ""}
-      <button data-act="next" title="Week after"><ha-icon icon="mdi:chevron-right"></ha-icon></button>`;
+    // Same header as the shopping list.
+    const which = this._offset === 0 ? "" : this._offset === 1 ? "the week after · " : this._offset === -1 ? "the week before · " : "";
+    const meals = (this._plan || []).filter((e) => e.recipe).length;
+    const count = this._plan ? ` · ${meals} meal${meals === 1 ? "" : "s"}` : "";
+    root.getElementById("bar").innerHTML = `<div class="head"><div class="title">${esc(this._config.title)}</div>
+      <button class="refresh" data-act="prev" title="Week before"><ha-icon icon="mdi:chevron-left"></ha-icon></button>
+      <button class="refresh" data-act="next" title="Week after"><ha-icon icon="mdi:chevron-right"></ha-icon></button>
+      <button class="refresh" data-act="refresh" title="Refresh"><ha-icon icon="mdi:refresh"></ha-icon></button></div>
+      <div class="sub">${esc(`${which}${fmt(w.start)} – ${fmt(w.end)}${count}`)}</div>`;
     const days = root.getElementById("days");
     const msg = root.getElementById("msg");
     const more = root.getElementById("more");

@@ -345,8 +345,7 @@ days: 10                 # optional
 ## Week plan card
 
 The plan tab in one card: the week's Mealie plan with a day card for each day
-(past days dimmed), arrows to the weeks before and after, and a button back to
-this week. A week with nothing planned shows the Use it up suggestions instead;
+(past days dimmed) and the same week arrows as the shopping list. A week with nothing planned shows the Use it up suggestions instead;
 a planned week has them a tap away at the bottom.
 
 ```yaml

@@ -592,6 +592,11 @@ class FridgeAssistantUnpackCard extends HTMLElement {
           justify-content: center; font-size: 19px; background: color-mix(in srgb, var(--tint) 20%, transparent); }
         .row { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; padding: 10px 12px; }
         .row.on { border-color: var(--primary-color); background: var(--secondary-background-color); }
+        .sel.inline { margin-top: -6px; border: 1px solid var(--primary-color); border-top: none;
+          border-top-left-radius: 0; border-top-right-radius: 0; }
+        .row.on:has(+ .sel.inline) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+        .sel.inline .pname { display: none; }
+        .sel.inline .prod:not(:has(img)):not(:has(.pline:not(:empty))) { display: none; }
         .row .n { flex: 1 1 auto; }
         .chip { font-size: 12px; color: var(--secondary-text-color); white-space: nowrap; }
         .empty { color: var(--secondary-text-color); margin-top: 14px; }
@@ -744,7 +749,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (!box) return;
     const sel = this._sel;
     box.hidden = !sel;
-    if (!sel) { box.innerHTML = ""; return; }
+    if (!sel) { box.innerHTML = ""; this._placeSel(); return; }
     const p = sel.product;
     const line = sel.line;
     const open = !line || line.qty > 0;
@@ -793,6 +798,25 @@ class FridgeAssistantUnpackCard extends HTMLElement {
           </button>`).join("")}
       </div>` : ""}
       <button class="cancel" data-act="cancel">${open ? "Cancel" : "Close"}</button>`;
+    this._placeSel();
+  }
+
+  /* The options open right under the line they're for; a scan that isn't
+   * on the list keeps them at the top, by the Scan button. */
+  _placeSel() {
+    const root = this.shadowRoot;
+    const node = root && root.getElementById("sel");
+    const list = root && root.getElementById("list");
+    if (!node || !list) return;
+    const uid = this._sel && this._sel.line && this._sel.line.uid;
+    const row = uid ? list.querySelector(`[data-act="line"][data-uid="${CSS.escape(uid)}"]`) : null;
+    if (row) {
+      if (row.nextElementSibling !== node) row.after(node);
+      node.classList.add("inline");
+    } else {
+      if (node.parentNode !== list.parentNode || node.nextElementSibling !== list) list.before(node);
+      node.classList.remove("inline");
+    }
   }
 
   _rowHtml(l, selUid) {
@@ -837,6 +861,9 @@ class FridgeAssistantUnpackCard extends HTMLElement {
   _renderList() {
     const box = this.shadowRoot && this.shadowRoot.getElementById("list");
     if (!box) return;
+    // The options box may be sitting inside the list: keep it out of the redraw.
+    const selNode = this.shadowRoot.getElementById("sel");
+    if (selNode && box.contains(selNode)) box.before(selNode);
     this._renderHead();
     if (!this._loaded) { box.innerHTML = ""; return; }
     if (!this._all.length) {
@@ -854,6 +881,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
           <ha-icon icon="mdi:check-circle-outline"></ha-icon>Put away<span class="cnt">${done.length}</span>
           <ha-icon class="chev${this._doneShut ? " shut" : ""}" icon="mdi:chevron-down"></ha-icon></button>
         ${this._doneShut ? "" : `<div class="list">${done.map((l) => this._rowHtml(l, selUid)).join("")}</div>`}` : ""}`;
+    this._placeSel();
   }
 }
 

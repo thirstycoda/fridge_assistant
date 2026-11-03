@@ -95,6 +95,46 @@ def convert(quantity: float, unit: str | None, template: dict[str, Any] | None) 
             return amount / _METRIC[target][1]
         if base in per:  # e.g. g per ml (a density) or each per g
             return amount * per[base]
+        # Spoons of something kept in grams (spices, mostly): approximate
+        # through the template's density (g per ml), or a ground spice's.
+        if base == "ml" and target in ("g", "kg"):
+            density = template_density(template)
+            if density:
+                grams = amount * density
+                return grams if target == "g" else grams / 1000
+    return None
+
+
+# A level teaspoon (5 ml) of ground spice weighs about 2.5 g. Denser things
+# kept with the spices are listed so a spoon of them isn't under-counted.
+SPICE_DENSITY = 0.5
+_DENSITIES = (
+    (("salt",), 1.2),
+    (("sugar",), 0.85),
+    (("baking powder", "bicarbonate", "baking soda", "cream of tartar"), 0.9),
+    (("yeast",), 0.6),
+    (("leaves", "dried herbs", "oregano", "thyme", "basil", "parsley", "rosemary", "mixed herbs"), 0.25),
+)
+
+
+def guess_density(name: str) -> float:
+    """Grams per ml for a dry seasoning by its name (a ground spice by default)."""
+    low = (name or "").lower()
+    for words, density in _DENSITIES:
+        if any(w in low for w in words):
+            return density
+    return SPICE_DENSITY
+
+
+def template_density(template: dict[str, Any] | None) -> float | None:
+    """Grams per ml: the template's own ``density``, else a spice's guess for
+    seasonings (category ``sauces_spices``) kept in grams."""
+    if not template:
+        return None
+    if template.get("density"):
+        return float(template["density"])
+    if template.get("category") == "sauces_spices":
+        return guess_density(template.get("name", ""))
     return None
 
 

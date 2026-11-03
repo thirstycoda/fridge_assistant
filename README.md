@@ -292,8 +292,15 @@ marked). Ingredients are summed per ingredient template in its unit, so two
 recipes needing a pepper each with one in stock show 1 under Need and 1
 under Have. Tap an ingredient for the meals it's for and **Added** / **Have**
 buttons. Meals already made are left out, and loose ingredients on the plan
-count too. Marks are shared through Fridge Assistant: marking an untracked
-ingredient (a spice) as Have lasts until undone; others lapse after a week.
+count too.
+
+Fridge Assistant is the source of truth for what's in stock, so **Have** asks
+how much you have and where it is, and adds it (`fridge_assistant/stock_have`)
+— setting the food up first when it isn't tracked yet, e.g. 30 g of smoked
+paprika, whose teaspoons then count as about 2.5 g each. On something in Have,
+**Need** takes it back out (it was eaten after all). The list follows stock
+changes as they happen. "Added" marks are shared and lapse after a week;
+"just mark as have" is for things not worth tracking and lasts until undone.
 
 ```yaml
 type: custom:fridge-assistant-shopping-card
@@ -315,7 +322,10 @@ recipe lines.
 An ingredient template can say how its stock is counted, so items know how
 much is left: `amount_unit` (`g`, `ml`, `each`, or a count word like
 `clove`), `pack_amount` (one pack, in that unit) and `per`, how recipe units
-convert (`{"tbsp": 18, "can": 400}`). New items then start with their pack
+convert (`{"tbsp": 18, "can": 400}`), and optionally `density` (g per ml) so
+spoons of something kept in grams convert; seasonings (category
+`sauces_spices`) without one use a ground spice's (a teaspoon ≈ 2.5 g, salt
+6 g). New items then start with their pack
 size (a quantity of `2` means two packs; a scanned `1.5 kg` converts
 directly), the item details show what's left, and it can be corrected in the
 edit form.

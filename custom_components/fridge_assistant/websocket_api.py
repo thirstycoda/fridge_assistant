@@ -105,6 +105,7 @@ TEMPLATE_SCHEMA = vol.Schema(
         vol.Optional("amount_unit"): _OPT_STR,
         vol.Optional("pack_amount"): vol.Any(None, vol.Coerce(float)),
         vol.Optional("per"): vol.Any(None, vol.Schema({cv.string: vol.Coerce(float)})),
+        vol.Optional("density"): vol.Any(None, vol.Coerce(float)),
         vol.Optional("source"): cv.string,
     },
     extra=vol.REMOVE_EXTRA,
@@ -137,6 +138,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_stock_check)
     websocket_api.async_register_command(hass, ws_set_shopping_mark)
     websocket_api.async_register_command(hass, ws_meal_label)
+    websocket_api.async_register_command(hass, ws_stock_have)
 
 
 def _person_pictures(hass: HomeAssistant) -> dict[str, str]:
@@ -841,3 +843,30 @@ async def ws_meal_label(hass, connection, msg) -> None:
             store.meal_labels.pop(key, None)
         await store.async_save()
     connection.send_result(msg["id"], {"recipe": key, "name": store.meal_labels.get(key)})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/stock_have",
+        vol.Required("food"): str,
+        vol.Required("amount"): vol.Coerce(float),
+        vol.Optional("unit"): vol.Any(None, str),
+        vol.Optional("location"): vol.Any(None, str),
+        vol.Optional("template_id"): vol.Any(None, str),
+        vol.Optional("spoons", default=False): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_stock_have(hass, connection, msg) -> None:
+    """Add what we have of a food to stock (from the shopping list), creating
+    its ingredient template when it isn't tracked yet."""
+    runtime = _runtime_or_error(hass, connection, msg)
+    if runtime is None:
+        return
+    res = runtime.store.stock_have(
+        msg["food"], msg["amount"], msg.get("unit"), msg.get("location"),
+        msg.get("template_id"), msg["spoons"],
+    )
+    by, by_name = _user_attrs(connection)
+    item = await runtime.async_add_item(res["item"], by=by, by_name=by_name)
+    connection.send_result(msg["id"], {"item": item, "template": res["template"]})

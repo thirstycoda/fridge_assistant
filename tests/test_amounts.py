@@ -43,6 +43,13 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(amounts.convert(1, None, GARLIC), 10)           # a whole bulb
         self.assertEqual(amounts.convert(10, "g", GARLIC), 2)            # via g -> clove
 
+    def test_spoons_of_a_spice_in_grams(self):
+        spice = {"amount_unit": "g", "category": "sauces_spices", "name": "Ground cumin"}
+        self.assertEqual(amounts.convert(1, "tsp", spice), 2.5)
+        self.assertEqual(amounts.convert(1, "tsp", {**spice, "name": "Salt"}), 6)
+        self.assertEqual(amounts.convert(1, "tbsp", {**spice, "density": 0.6}), 9)
+        self.assertIsNone(amounts.convert(1, "tsp", {"amount_unit": "g", "category": "other"}))
+
     def test_unknown_conversion_is_none(self):
         self.assertIsNone(amounts.convert(1, "cup", MISO))               # no density given
         self.assertIsNone(amounts.convert(1, "g", SOY))
@@ -251,6 +258,28 @@ class TestStockCheck(unittest.TestCase):
         item = self.add("Plain flour", amount=200)
         self.store.stock_check([{"food": "plain flour", "quantity": 500, "unit": "g"}])
         self.assertEqual(self.store.items[item["id"]]["amount"], 200)
+
+    def test_have_adds_stock_for_a_tracked_food(self):
+        res = self.store.stock_have("romano peppers", 3, "each", "fridge")
+        item = self.store.add_item(self.store.build_item(res["item"]))
+        self.assertEqual((item["name"], item["location"], item["amount"]), ("Romano pepper", "fridge", 3))
+        g = self.groups([{"food": "romano pepper", "quantity": 2}])["Romano pepper"]
+        self.assertEqual((g["have"], g["short"]), (2, 0))
+
+    def test_have_creates_a_spice(self):
+        res = self.store.stock_have("smoked paprika", 30, "g", None, spoons=True)
+        tpl = res["template"]
+        self.assertEqual((tpl["category"], tpl["amount_unit"], tpl["pack_amount"]), ("sauces_spices", "g", 30))
+        item = self.store.add_item(self.store.build_item(res["item"]))
+        self.assertEqual((item["amount"], item["location"]), (30, "cupboard"))
+        out = self.store.consume_ingredients([{"food": "smoked paprika", "quantity": 2, "unit": "tsp"}])
+        self.assertEqual(out["lines"][0]["need"], 5)                 # 2 tsp ~ 5 g
+        self.assertEqual(self.store.items[item["id"]]["amount"], 25)
+
+    def test_have_starts_tracking_a_food_without_amounts(self):
+        res = self.store.stock_have("coconut water", 1000, "ml")
+        self.assertEqual(res["template"]["amount_unit"], "ml")
+        self.assertEqual(res["template"]["pack_amount"], 1000)
 
     def test_marks(self):
         self.store.set_shopping_mark("t:x", "added")

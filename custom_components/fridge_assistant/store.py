@@ -18,6 +18,7 @@ from .amounts import (
     EMPTY_SHARE,
     NEGLIGIBLE_UNITS,
     convert,
+    guess_density,
     initial_amount,
     normalize_unit,
 )
@@ -463,7 +464,7 @@ class FridgeStore:
         )
         # Inventory amounts: the unit stock is counted in, a pack's size in it,
         # and how recipe units convert ({"tbsp": 18, "can": 400}).
-        for key in ("amount_unit", "pack_amount", "per"):
+        for key in ("amount_unit", "pack_amount", "per", "density"):
             if key in data or key in existing:
                 tpl[key] = data.get(key, existing.get(key))
         if "opened_fridge" in data or "opened_fridge" in existing:
@@ -1137,8 +1138,66 @@ class FridgeStore:
             group["have"] = round(have, 2)
             group["short"] = round(max(need - have, 0.0), 2)
             group["other"] = {u: round(q, 2) for u, q in group["other"].items()}
+            # For adding what we have: where it keeps, a pack's size, and
+            # whether recipes measure it in spoons (a seasoning).
+            group["spoons"] = any(normalize_unit(src["unit"]) in ("tsp", "tbsp", "pinch", "dash")
+                                  for src in group["sources"])
+            group["location"] = (self.natural_location(template) if template and template.get("shelf_life")
+                                 else (LOCATION_CUPBOARD if group["spoons"] else None))
+            group["pack_amount"] = (template or {}).get("pack_amount")
+            group["per"] = sorted(((template or {}).get("per") or {}).keys())
             out.append(group)
         return sorted(out, key=lambda g: g["name"].lower())
+
+    def stock_have(
+        self,
+        food: str,
+        amount: float,
+        unit: str | None,
+        location: str | None = None,
+        template_id: str | None = None,
+        spoons: bool = False,
+    ) -> dict[str, Any]:
+        """Record that we have ``amount`` ``unit`` of a food (from the shopping
+        list), so stock matches the kitchen.
+
+        The food's ingredient template is used, or created when there's none
+        (a spice bought for the first time). ``spoons`` says recipes measure it
+        in spoons, so a new one is a seasoning whose teaspoons convert to
+        grams. A template without amounts starts tracking in ``unit``.
+        Returns ``{"item": <add_item data>, "template"}``; the item still has
+        to be added (``build_item`` / ``async_add_item``).
+        """
+        u = normalize_unit(unit) or "each"
+        base = {"kg": "g", "l": "ml", "cl": "ml"}.get(u, u)
+        template = self.get_template(template_id) if template_id else None
+        if template is None:
+            template = self.match_ingredient(food)
+        if template is None:
+            name = food.strip()
+            data: dict[str, Any] = {
+                "name": name[:1].upper() + name[1:],
+                "category": "sauces_spices" if spoons else "other",
+                "kind": KIND_INGREDIENT,
+                "amount_unit": base,
+                "shelf_life": ({"pantry": 730, "fridge": None, "freezer": None} if spoons
+                               else {"pantry": 180, "fridge": None, "freezer": None}),
+            }
+            if spoons and base == "g":
+                data["density"] = guess_density(name)
+            template = self.upsert_user_template(data)
+        elif not template.get("amount_unit"):
+            template = self.upsert_user_template({**template, "id": template["id"], "amount_unit": base})
+        tpl_unit = normalize_unit(template["amount_unit"])
+        given = convert(float(amount), u, template) if amount else None
+        if given and not template.get("pack_amount"):
+            template = self.upsert_user_template({**template, "id": template["id"], "pack_amount": round(given, 2)})
+        where = location if location in LOCATIONS else self.natural_location(template)
+        item = {
+            "name": template["name"], "contents": template["name"], "template_id": template["id"],
+            "location": where, "amount": amount, "amount_unit": unit or tpl_unit,
+        }
+        return {"item": item, "template": template}
 
     def shopping_marks_now(self, max_age_days: int = 7) -> dict[str, dict[str, Any]]:
         """Current marks; ones that aren't sticky lapse after ``max_age_days``."""

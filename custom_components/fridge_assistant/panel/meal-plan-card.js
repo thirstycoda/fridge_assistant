@@ -1609,16 +1609,13 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
         .head { display: flex; align-items: center; gap: 8px; }
         .title { font-size: 20px; font-weight: 600; flex: 1 1 auto; }
         .sub { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }
-        .mealie { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; padding: 6px 12px;
-          border-radius: 18px; background: var(--primary-color); color: var(--text-primary-color, #fff);
-          text-decoration: none; font-size: 14px; font-weight: 500; white-space: nowrap; }
-        .mealie ha-icon { --mdc-icon-size: 18px; }
         .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; padding: 6px; }
         .days { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
         .days > .past { opacity: .6; }
         .empty { padding: 4px 16px 16px; color: var(--secondary-text-color); }
-        .more { margin-top: 16px; }
-        .more > button { width: 100%; padding: 12px; border-radius: 12px; border: 1px dashed var(--divider-color);
+        .more { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+        .empty .more { margin-top: 12px; }
+        .more > button, .more > a { box-sizing: border-box; text-decoration: none; width: 100%; padding: 12px; border-radius: 12px; border: 1px dashed var(--divider-color);
           background: none; color: var(--primary-text-color); font: inherit; font-weight: 500; cursor: pointer;
           display: flex; align-items: center; justify-content: center; gap: 8px; }
         .more ha-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
@@ -1674,7 +1671,6 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     const base = String(this._config.mealie_url).replace(/\/+$/, "");
     const planUrl = `${base}/household/mealplan/planner/edit?start=${isoDate(w.start)}&end=${isoDate(w.end)}`;
     root.getElementById("bar").innerHTML = `<div class="head"><div class="title">${esc(this._config.title)}</div>
-      <a class="mealie" href="${esc(planUrl)}" target="_blank" rel="noopener"><ha-icon icon="mdi:calendar-edit"></ha-icon>Plan in Mealie</a>
       <button class="refresh" data-act="prev" title="Week before"><ha-icon icon="mdi:chevron-left"></ha-icon></button>
       <button class="refresh" data-act="next" title="Week after"><ha-icon icon="mdi:chevron-right"></ha-icon></button>
       <button class="refresh" data-act="refresh" title="Refresh"><ha-icon icon="mdi:refresh"></ha-icon></button></div>
@@ -1686,7 +1682,9 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     if (this._error) { msg.innerHTML = `<div class="err">${esc(this._error)}</div>`; return; }
     if (this._plan == null) { msg.innerHTML = `<div class="empty">Loading…</div>`; days.replaceChildren(); more.innerHTML = ""; return; }
     const planned = this._plan.length > 0;
-    msg.innerHTML = planned ? "" : `<div class="empty">Nothing planned for ${esc(weekName(w.start, this._config.week_start).toLowerCase())} yet. Here's what could do with using up, and recipes that use it.</div>`;
+    const mealieBtn = `<a href="${esc(planUrl)}" target="_blank" rel="noopener"><ha-icon icon="mdi:calendar-edit"></ha-icon>Plan in Mealie</a>`;
+    msg.innerHTML = planned ? "" : `<div class="empty">Nothing planned for ${esc(weekName(w.start, this._config.week_start).toLowerCase())} yet. Here's what could do with using up, and recipes that use it.
+      <div class="more">${mealieBtn}</div></div>`;
     // Day cards, reused while the week stays the same.
     const dates = Array.from({ length: 7 }, (_, i) => isoDate(addDays(w.start, i)));
     for (const key of [...this._days.keys()]) if (!dates.includes(key)) this._days.delete(key);
@@ -1701,7 +1699,7 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
       days.replaceChildren();
     }
     const showIdeas = !planned || this._showIdeas;
-    more.innerHTML = planned ? `<button data-act="ideas"><ha-icon icon="${this._showIdeas ? "mdi:chevron-up" : "mdi:lightbulb-on-outline"}"></ha-icon>
+    more.innerHTML = planned ? `${mealieBtn}<button data-act="ideas"><ha-icon icon="${this._showIdeas ? "mdi:chevron-up" : "mdi:lightbulb-on-outline"}"></ha-icon>
       ${this._showIdeas ? "Hide ideas" : "Ideas: what to use up, and leftovers in the freezer"}</button>` : "";
     if (showIdeas) {
       if (!this._useUp) {

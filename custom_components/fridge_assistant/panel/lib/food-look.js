@@ -64,6 +64,8 @@ export function foodEmoji(name) {
 const NAME_AISLE = [
   [/toilet|kitchen roll|tissue|washing|detergent|soap|bin bag|foil|cling|nappy|nappies|wipes/, "household"],
   [/baby|infant|kids'|little yeos|toddler|pouch|\b\d+\+ ?months/, "baby"],
+  [/baked beans|passata|chopped tomato|tinned|canned|\btins?\b/, "tins"],
+  [/tofu|tempeh|seitan|houmous|hummus|vegan cheese|plant kitchen|oat cream|soya? cream|yoghurt|yogurt|soya? drink|soya? milk|oat milk/, "chilled"],
   [/bean|lentil|chick ?pea|split pea/, "beans"],
   [/rice|pasta|spaghetti|noodle|oat|quinoa|couscous|grain|cereal|polenta|freekeh/, "grains"],
   [/cashew|almond|walnut|hazelnut|peanut(?! butter)|pecan|pistachio|seed/, "nuts"],

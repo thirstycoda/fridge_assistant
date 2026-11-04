@@ -253,6 +253,28 @@ A line's description may hold JSON — `{"name": "<product title>", "qty": 2,
 "location": "auto", "ordered": "<original, for a substitute>"}`; otherwise
 the summary (`2 × Product`) is used. Live scanning needs HTTPS.
 
+## Stock card
+
+What's in one place — the pantry by default — grouped by supermarket aisle
+like the shopping list. One row per food (with a count when there's more than
+one), showing how much is left and how long it keeps, plus a search box.
+
+```yaml
+type: custom:fridge-assistant-stock-card
+location: pantry   # cupboard | fridge | freezer | pantry
+title: Pantry      # optional
+```
+
+- **Tap a food** to mark it eaten (asks how much is left; 0 finishes it),
+  tossed, print its label (pick which portions), change its date or portions,
+  move it, or add another.
+- **Scan** a shop barcode or one of your labels: something in stock opens its
+  popup (the one that runs out first); a new product opens an add form filled
+  in from the barcode. The number can be typed if the camera can't read it.
+- **Add** finds a food among the templates, or creates a new one.
+
+Everything added here goes to the card's location.
+
 ## Meal plan card
 
 A card for one day of a [Mealie](https://mealie.io) meal plan (read through

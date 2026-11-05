@@ -265,13 +265,15 @@ location: pantry   # cupboard | fridge | freezer | pantry
 title: Pantry      # optional
 ```
 
-- **Tap a food** to mark it eaten (asks how much is left; 0 finishes it),
-  tossed, print its label (pick which portions), change its date or portions,
-  move it, or add another.
-- **Scan** a shop barcode or one of your labels: something in stock opens its
+- **Tap a food** for **Eaten** (asks how much is left; 0 finishes it),
+  **Tossed**, **Print label** (pick which portions) and **Add another**, then
+  its date, its **Total** (how much there is, in g/kg, ml/l, or portions for
+  things bought loose like oranges or potatoes; a cooked dish shows its
+  labelled portions instead) and where to move it.
+- **Scan** (barcode icon) a shop barcode or one of your labels: something in stock opens its
   popup (the one that runs out first); a new product opens an add form filled
   in from the barcode. The number can be typed if the camera can't read it.
-- **Add** finds a food among the templates, or creates a new one.
+- **Add** (plus icon) finds a food among the templates, or creates a new one.
 
 Everything added here goes to the card's location.
 

@@ -2,7 +2,8 @@
  *
  * Everything in stock in one place (the pantry, by default), grouped by
  * supermarket aisle like the shopping list and unpack cards. Tap a food to
- * eat, toss, print its label, change its date, portions or place, or add
+ * eat, toss, print its label, change its date, total (or a dish's portions)
+ * or place, or add
  * another. Scan a shop barcode or a printed label to open the same popup;
  * a barcode that isn't in stock opens an add form filled in from the product.
  * Add finds a food from the templates (or makes a new one).
@@ -129,6 +130,7 @@ const STYLE = `
   .btn.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
   .btn.danger { background: var(--error-color, #db4437); color: #fff; border-color: transparent; }
   .btn.soft { background: var(--secondary-background-color); border-color: transparent; }
+  .btn.icon { width: 44px; height: 44px; padding: 0; flex: 0 0 auto; }
 
   .head { display: flex; align-items: center; gap: 8px; }
   .title { flex: 1 1 auto; font-size: 20px; font-weight: 600; line-height: 1.2; }
@@ -192,6 +194,9 @@ const STYLE = `
   .step button { width: 34px; height: 34px; border-radius: 50%; background: var(--secondary-background-color); display: flex;
     align-items: center; justify-content: center; }
   .step b { min-width: 28px; text-align: center; }
+  .total { display: flex; align-items: center; gap: 6px; }
+  .total input { width: 84px; padding: 6px 10px; text-align: right; }
+  .total select { padding: 6px 8px; }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .chip { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 16px; font-size: 13px;
     background: var(--secondary-background-color); }
@@ -347,6 +352,7 @@ class FridgeAssistantStockCard extends HTMLElement {
       if (e.key !== "Enter") return;
       if (e.target.id === "code") { e.preventDefault(); this._lookupTyped(); }
       else if (e.target.id === "left") { e.preventDefault(); this._saveLeft(); }
+      else if (e.target.id === "total") { e.preventDefault(); e.target.blur(); }
       else if (e.target.id === "tq") { e.preventDefault(); const b = this.shadowRoot.querySelector("#tlist .row"); if (b) b.click(); }
     });
     const dlg = root.getElementById("dlg");
@@ -364,8 +370,8 @@ class FridgeAssistantStockCard extends HTMLElement {
     h.innerHTML = `
       <div class="title">${esc(this._config.title)}
         <div class="sub">${this._state ? `${n} item${n === 1 ? "" : "s"}` : "Loading…"}</div></div>
-      <button class="btn" data-act="add"><ha-icon icon="mdi:plus"></ha-icon>Add</button>
-      <button class="btn primary" data-act="scan"><ha-icon icon="mdi:barcode-scan"></ha-icon>Scan</button>`;
+      <button class="btn icon" data-act="add" aria-label="Add" title="Add"><ha-icon icon="mdi:plus"></ha-icon></button>
+      <button class="btn icon primary" data-act="scan" aria-label="Scan" title="Scan"><ha-icon icon="mdi:barcode-scan"></ha-icon></button>`;
   }
 
   _renderList() {
@@ -433,6 +439,21 @@ class FridgeAssistantStockCard extends HTMLElement {
   _onChange(e) {
     const t = e.target;
     if (t.id === "exp" && this._dlg && this._dlg.mode === "item") this._setExpiry(t.value);
+    if (t.id === "total" && this._dlg && this._dlg.mode === "item") this._setTotal();
+    if (t.id === "totalunit" && this._dlg && this._dlg.mode === "item") {
+      // Switching g <-> kg or ml <-> l shows the same amount in the new unit;
+      // only a unit for something not tracked yet saves straight away.
+      const input = this.shadowRoot.getElementById("total");
+      const from = t.dataset.unit;
+      const to = t.value;
+      const v = Number(input && input.value);
+      t.dataset.unit = to;
+      if (input && input.value !== "" && !Number.isNaN(v) && BASE_UNIT[from] && BASE_UNIT[from][0] === to) {
+        input.value = String(Math.round(v * BASE_UNIT[from][1] * 100) / 100);
+      } else if (input && input.value !== "" && !Number.isNaN(v) && BASE_UNIT[to] && BASE_UNIT[to][0] === from) {
+        input.value = String(Math.round(v / BASE_UNIT[to][1] * 1000) / 1000);
+      } else if (input && input.value !== "") this._setTotal();
+    }
   }
 
   _focus(id) { setTimeout(() => { const el = this.shadowRoot.getElementById(id); if (el) { el.focus(); if (el.select) el.select(); } }, 60); }
@@ -559,21 +580,63 @@ class FridgeAssistantStockCard extends HTMLElement {
     return `${head}
       <div class="acts">
         <button class="btn primary" data-act="eat" ${busy}><ha-icon icon="mdi:silverware-fork-knife"></ha-icon>Eaten</button>
-        <button class="btn" data-act="print" ${busy}><ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>
         <button class="btn" data-act="toss" ${busy}><ha-icon icon="mdi:delete-outline"></ha-icon>Tossed</button>
+        <button class="btn" data-act="print" ${busy}><ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>
         <button class="btn" data-act="another" ${busy}><ha-icon icon="mdi:plus"></ha-icon>Add another</button>
       </div>
       <div class="facts">
         <div class="fact"><span>Expires</span>${it.days_left != null && sib.length < 2
           ? `<small class="days ${esc(it.status || "")}">${esc(daysText(it.days_left))}</small>` : ""}
           <input id="exp" type="date" value="${esc(it.expiry_date || "")}" ${busy} aria-label="Expiry date"></div>
-        <div class="fact"><span>Portions</span><div class="step">
+        ${it.kind === "dish" || multi ? `<div class="fact"><span>Portions</span><div class="step">
           <button data-act="pminus" aria-label="Fewer portions" ${ports.length <= Math.max(1, consumed + (open.length ? 1 : 0)) || this._busy ? "disabled" : ""}><ha-icon icon="mdi:minus"></ha-icon></button>
           <b>${ports.length}</b>
-          <button data-act="pplus" aria-label="More portions" ${ports.length >= 24 || this._busy ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon></button></div></div>
+          <button data-act="pplus" aria-label="More portions" ${ports.length >= 24 || this._busy ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon></button></div></div>`
+          : this._totalHtml(it, busy)}
         <div class="fact"><span>Move to</span><div class="chips">${LOCATIONS.filter((l) => l.key !== it.location).map((l) =>
           `<button class="chip" data-act="move" data-loc="${l.key}" ${busy}><ha-icon icon="${l.icon}"></ha-icon>${l.label}</button>`).join("")}</div></div>
       </div>`;
+  }
+
+  /* Total: how much of it there is, in its own unit (g/kg, ml/l, or a count
+   * for things bought loose, like oranges or potatoes). Editing it sets the
+   * amount Fridge Assistant tracks. */
+  _totalHtml(it, busy) {
+    const unit = it.amount != null ? (it.amount_unit || "each") : null;
+    const units = unit === "g" ? ["g", "kg"] : unit === "ml" ? ["ml", "l"] : unit ? [unit] : ANY_UNITS;
+    // Big amounts read better in kg or l.
+    let shown = unit;
+    let value = it.amount != null ? it.amount : "";
+    if ((unit === "g" || unit === "ml") && it.amount >= 1000) { shown = unit === "g" ? "kg" : "l"; value = it.amount / 1000; }
+    if (value !== "") value = Math.round(value * 100) / 100;
+    const label = (u) => (u === "each" ? "portions" : u);
+    return `<div class="fact"><span>Total</span><div class="total">
+      <input id="total" type="number" inputmode="decimal" min="0" step="any" value="${esc(value)}" ${busy} aria-label="Total">
+      <select id="totalunit" aria-label="Unit" data-unit="${shown || "each"}" ${busy}>${units.map((u) =>
+        `<option value="${u}"${u === (shown || "each") ? " selected" : ""}>${label(u)}</option>`).join("")}</select></div></div>`;
+  }
+
+  async _setTotal() {
+    const d = this._dlg;
+    const it = d && this._item(d.id);
+    const input = this.shadowRoot.getElementById("total");
+    const sel = this.shadowRoot.getElementById("totalunit");
+    if (!it || !input || !sel) return;
+    const raw = input.value.trim();
+    const v = Number(raw);
+    if (raw === "" || Number.isNaN(v) || v < 0) { this._toast("Type how much there is (0 if it's finished).", { bad: true }); return; }
+    if (v === 0) { this._complete("eaten"); return; }
+    const b = toBase(v, sel.value);
+    if (b.amount === it.amount && b.unit === (it.amount_unit || b.unit)) return;
+    const changes = { amount: b.amount };
+    if (it.amount == null || b.unit !== it.amount_unit) changes.amount_unit = b.unit;
+    const before = { amount: it.amount, amount_unit: it.amount_unit };
+    await this._run(async () => {
+      await this._ws("update_item", { item_id: it.id, changes });
+      this._toast(`${it.name}: ${fmtAmount(b.amount, b.unit)}`, {
+        action: "Undo", onAction: () => this._ws("update_item", { item_id: it.id, changes: before }).catch(() => {}),
+      });
+    });
   }
 
   async _run(fn) {

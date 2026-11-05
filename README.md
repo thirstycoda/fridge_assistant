@@ -332,7 +332,9 @@ A week of the Mealie meal plan as a shopping list in four sections: **Need**
 was only the usual pack size, used day to day — templates with `everyday:
 true` — only just enough, going off before it's used, or not checked for a
 month), **Have** and **Added** (in the basket). **Still there** on a Check row
-confirms the amount (or corrects it) through `fridge_assistant/confirm_stock`.
+confirms the amount (or corrects it) through `fridge_assistant/confirm_stock`;
+a look in the last week settles it (going off before the meal included), so it
+moves to Have.
 When shopping ahead (a week that hasn't started), the meals still to come
 before it get first claim on stock: their lines go to `stock_check` with
 `reserved: true`, so a pepper Friday's dinner needs doesn't count as one
@@ -352,7 +354,10 @@ planner.
 Fridge Assistant is the source of truth for what's in stock, so **Have** asks
 how much you have and where it is, and adds it (`fridge_assistant/stock_have`)
 — setting the food up first when it isn't tracked yet, e.g. 30 g of smoked
-paprika, whose teaspoons then count as about 2.5 g each. On something in Have,
+paprika, whose teaspoons then count as about 2.5 g each. When some is already
+in stock, **Have** asks for the total instead (starting from what's recorded)
+and sets the stock to it, as **Still there** does, rather than adding another
+pack. On something in Have,
 **Need** takes it back out (it was eaten after all). The list follows stock
 changes as they happen, and past days drop off after midnight. "Added"
 marks are shared and lapse after a week.

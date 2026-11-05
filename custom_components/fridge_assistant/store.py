@@ -1239,16 +1239,14 @@ class FridgeStore:
         """Why stock that covers a shopping need is worth a look before
         trusting it (empty when it can be trusted).
 
-        ``expires``: an item goes off before the last meal that needs it.
-        Unless every item was checked in the last week, also: ``untracked``
-        (no amounts kept), ``guessed`` (amount is the usual pack size, never
-        confirmed), ``opened``, ``everyday`` (used outside recipes too),
-        ``tight`` (only just enough) and ``stale`` (not looked at for a month).
+        Once every item was checked in the last week there's nothing to look
+        at. Otherwise: ``expires`` (an item goes off before the last meal that
+        needs it), ``untracked`` (no amounts kept), ``guessed`` (amount is the
+        usual pack size, never confirmed), ``opened``, ``everyday`` (used
+        outside recipes too), ``tight`` (only just enough) and ``stale`` (not
+        looked at for a month).
         """
         reasons: list[str] = []
-        until = group.get("until")
-        if until and any(i.get("expiry_date") and i["expiry_date"] < until for i in items):
-            reasons.append("expires")
         now = dt_util.now()
 
         def checked(item: dict[str, Any]) -> datetime | None:
@@ -1262,7 +1260,11 @@ class FridgeStore:
         fresh = all((item.get("amount_checked_at") and checked(item)
                      and now - checked(item) <= _days(self.CHECK_FRESH_DAYS)) for item in items)
         if fresh:
+            # Someone looked and said it's there: that settles it, use-by included.
             return reasons
+        until = group.get("until")
+        if until and any(i.get("expiry_date") and i["expiry_date"] < until for i in items):
+            reasons.append("expires")
         if not template.get("amount_unit"):
             return [*reasons, "untracked"]
         if any(not i.get("amount_checked_at") for i in items):

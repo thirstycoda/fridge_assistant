@@ -337,6 +337,15 @@ class TestStockCheck(unittest.TestCase):
         g = self.groups([{"food": "plain flour", "quantity": 900, "unit": "g", "date": "2026-11-06"}])["Plain flour"]
         self.assertEqual(g["check"], ["expires", "opened", "tight", "stale"])
 
+    def test_still_there_clears_expires(self):
+        tofu = self.add("Plain flour", amount=600)
+        tofu["expiry_date"] = "2026-11-04"                        # goes off before the meal
+        tofu["amount_checked_at"] = "2026-01-01T00:00:00+00:00"  # not looked at lately
+        line = [{"food": "plain flour", "quantity": 400, "unit": "g", "date": "2026-11-06"}]
+        self.assertIn("expires", self.groups(line)["Plain flour"]["check"])
+        self.store.confirm_stock(tofu["template_id"])             # "Still there"
+        self.assertEqual(self.groups(line)["Plain flour"]["check"], [])
+
     def test_everyday_and_untracked(self):
         self.store.upsert_user_template({"name": "Soy milk", "amount_unit": "ml", "pack_amount": 1000, "everyday": True})
         self.add("Soy milk", amount=1000)

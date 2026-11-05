@@ -863,8 +863,9 @@ async def ws_meal_label(hass, connection, msg) -> None:
 )
 @websocket_api.async_response
 async def ws_stock_have(hass, connection, msg) -> None:
-    """Add what we have of a food to stock (from the shopping list), creating
-    its ingredient template when it isn't tracked yet."""
+    """Record what we have of a food (from the shopping list): added to stock,
+    creating its ingredient template when it isn't tracked yet, or, when some
+    is already in stock, the stock set to that total."""
     runtime = _runtime_or_error(hass, connection, msg)
     if runtime is None:
         return
@@ -873,8 +874,24 @@ async def ws_stock_have(hass, connection, msg) -> None:
         msg.get("template_id"), msg["spoons"],
     )
     by, by_name = _user_attrs(connection)
+    template = res["template"]
+    existing = [i for i in runtime.store.items.values() if i.get("template_id") == template["id"]]
+    if existing:
+        # Already in stock: "we have this much" is the total, so the stock is
+        # set to it (and counts as checked) rather than another pack added.
+        try:
+            conf = await runtime.async_confirm_stock(template["id"], msg["amount"], msg.get("unit"),
+                                                     by=by, by_name=by_name)
+        except ValueError as err:
+            connection.send_error(msg["id"], "invalid", str(err))
+            return
+        left = [i for i in runtime.store.items.values() if i.get("template_id") == template["id"]]
+        item = max(left, key=lambda i: i.get("amount") or 0) if left else None
+        connection.send_result(msg["id"], {"item": item, "template": template, "updated": True,
+                                           "stock": conf["stock"]})
+        return
     item = await runtime.async_add_item(res["item"], by=by, by_name=by_name)
-    connection.send_result(msg["id"], {"item": item, "template": res["template"]})
+    connection.send_result(msg["id"], {"item": item, "template": template, "updated": False})
 
 
 @websocket_api.websocket_command(

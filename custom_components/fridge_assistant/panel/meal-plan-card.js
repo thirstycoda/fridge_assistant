@@ -999,14 +999,16 @@ class FridgeAssistantShoppingCard extends HTMLElement {
 
   _openHave(group) {
     const units = this._unitsFor(group);
-    const amount = group.unit ? (group.pack_amount || group.short || "") : "";
+    // Already in stock: start from what's recorded, to be corrected to the total.
+    const amount = group.unit ? (group.in_stock && group.stock > 0 ? group.stock : (group.pack_amount || group.short || "")) : "";
     this._form = { key: group.key, amount: amount === "" ? "" : String(amount), unit: group.unit || units[0] };
     this._notice = null;
     this._render();
   }
 
   /* We have it: put it in Fridge Assistant (creating the food when it isn't
-   * tracked yet), which moves it to Have. */
+   * tracked yet), or, when some is already in stock, set the stock to this
+   * total. Either way it moves to Have when there's enough. */
   async _have(group, location) {
     const f = this._form;
     const amount = Number(f && f.amount);
@@ -1015,14 +1017,16 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     try {
       const food = group.tracked ? group.name : (group.sources[0] && group.sources[0].food) || group.name;
       const res = await this._hass.callWS({
-        type: "fridge_assistant/stock_have", food, amount, unit: f.unit, location,
+        type: "fridge_assistant/stock_have", food, amount, unit: f.unit, location: location || null,
         template_id: group.template_id || null, spoons: !!group.spoons,
       });
       if (this._marks[group.key]) {
         await this._hass.callWS({ type: "fridge_assistant/set_shopping_mark", key: group.key, state: null }).catch(() => {});
       }
-      const where = { cupboard: "the cupboard", fridge: "the fridge", freezer: "the freezer", pantry: "the pantry" }[res.item.location] || res.item.location;
-      this._notice = { key: `t:${res.template.id}`, text: `Added ${amountText(amount, f.unit)} ${res.item.name.toLowerCase()} to ${where} (${res.item.code})` };
+      const where = (it) => ({ cupboard: "the cupboard", fridge: "the fridge", freezer: "the freezer", pantry: "the pantry" }[it.location] || it.location);
+      this._notice = { key: `t:${res.template.id}`, text: res.updated
+        ? `${res.template.name}: ${amountText(amount, f.unit)} in stock now`
+        : `Added ${amountText(amount, f.unit)} ${res.item.name.toLowerCase()} to ${where(res.item)} (${res.item.code})` };
       this._form = null; this._open = null;
       await this._restock();
     } catch (err) {
@@ -1363,6 +1367,19 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     const f = this._form;
     const k = esc(g.key);
     const units = this._unitsFor(g);
+    if (g.in_stock) {
+      // Some is already in stock: this is the total, saved where it already is.
+      return `<div class="haveform">
+      <div class="amtrow"><span>How much is there in total?</span>
+        <input data-field="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(f.amount)}" placeholder="?">
+        <select data-field="unit">${units.map((u) => `<option value="${esc(u)}"${u === f.unit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
+      </div>
+      <div class="btns">
+        <button class="primary" data-act="havewhere" data-loc="" data-key="${k}" data-sec="${sec}" ${this._busy ? "disabled" : ""}><ha-icon icon="mdi:check"></ha-icon>Save</button>
+        <button data-act="cancelhave" data-key="${k}" data-sec="${sec}">Cancel</button>
+      </div>
+    </div>`;
+    }
     const locs = [["cupboard", "Cupboard", "mdi:cupboard-outline"], ["fridge", "Fridge", "mdi:fridge"],
       ["freezer", "Freezer", "mdi:snowflake"], ["pantry", "Pantry", "mdi:basket-outline"]];
     return `<div class="haveform">

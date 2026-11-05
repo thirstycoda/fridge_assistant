@@ -587,18 +587,22 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         .loc.sug { border: 2px solid var(--primary-color); }
         .loc small { font-weight: 400; color: var(--primary-color); font-size: 12px; min-height: 1em; }
         .cancel { margin-top: 10px; background: none; border: none; color: var(--secondary-text-color); padding: 4px 0; }
-        .list { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+        .list { margin-top: 6px; display: flex; flex-direction: column; }
         .aisle-h { display: flex; align-items: center; gap: 6px; margin-top: 16px; font-size: 12px; font-weight: 600;
           text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); padding: 0 2px 4px;
           border-bottom: 2px solid color-mix(in srgb, var(--tint) 45%, transparent); }
         .cnt { margin-left: auto; font-weight: 600; font-size: 12px; color: var(--secondary-text-color); }
-        .th { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 10px; display: flex; align-items: center;
-          justify-content: center; font-size: 19px; background: color-mix(in srgb, var(--tint) 20%, transparent); }
-        .row { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; padding: 10px 12px; }
-        .row.on { border-color: var(--primary-color); background: var(--secondary-background-color); }
-        .sel.inline { margin-top: -6px; border: 1px solid var(--primary-color); border-top: none;
-          border-top-left-radius: 0; border-top-right-radius: 0; }
-        .row.on:has(+ .sel.inline) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+        .th { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 12px; display: flex; align-items: center;
+          justify-content: center; font-size: 22px; background: color-mix(in srgb, var(--tint) 20%, transparent); }
+        /* Rows are flat list lines like the shopping list and pantry, not boxed buttons. */
+        .row { display: flex; align-items: center; gap: 12px; text-align: left; width: 100%; padding: 9px 4px;
+          background: none; border: none; border-radius: 0; color: inherit;
+          border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); }
+        .row:last-child { border-bottom: none; }
+        .row:hover { background: color-mix(in srgb, var(--secondary-background-color) 70%, transparent); }
+        .row.on { background: var(--secondary-background-color); border-radius: 12px 12px 0 0; border-bottom-color: transparent; }
+        .row.on:not(:has(+ .sel.inline)) { border-radius: 12px; }
+        .sel.inline { margin: 0 0 6px; border-top-left-radius: 0; border-top-right-radius: 0; }
         .sel.inline .pname { display: none; }
         .sel.inline .prod:not(:has(img)):not(:has(.pline:not(:empty))) { display: none; }
         .row .n { flex: 1 1 auto; }

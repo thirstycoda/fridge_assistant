@@ -364,10 +364,20 @@ todo_entity: todo.planned_meals   # optional, where made meals are recorded
 ignore: [water]                   # optional, foods never listed
 week_start: saturday              # optional, the plan's weeks start on this day
 plan_day: thursday                # optional, from this day the coming week shows
+deadline_entity: sensor.ocado_uk_deliveries_next_edit_deadline   # optional countdown
+delivery_entity: sensor.ocado_uk_deliveries_next_delivery        # optional, its window
 ```
 
 The list covers one plan week (from today, for the week in progress), with
 arrows to look at the week before or after.
+
+With `deadline_entity` (a timestamp sensor: when the order stops taking
+changes, e.g. the Ocado integration's next edit deadline) a box under the
+title counts down to it, like the unpack card's delivery countdown:
+"Finalise in 5 h 12 min — Order closes Thu 5 Nov, 23:12". It turns urgent in
+the last two hours, says "Order finalised" once the deadline has passed, and
+adds the delivery window when `delivery_entity` is set. It shows on the
+current week only.
 
 `fridge_assistant/stock_check` (websocket) does the sums for any list of
 recipe lines.

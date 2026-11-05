@@ -739,7 +739,24 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
  *   mealie_url: https://mealie.example   # links to recipes that need tidying
  *   week_start: saturday             # the plan's weeks start on this day
  *   plan_day: thursday               # from this day on, show the coming week
+ *   deadline_entity: sensor.ocado_uk_deliveries_next_edit_deadline   # optional countdown
+ *   delivery_entity: sensor.ocado_uk_deliveries_next_delivery        # optional, its window
+ *
+ * With deadline_entity (a timestamp: when the order stops taking changes)
+ * the list shows how long is left to finalise the shopping, like the unpack
+ * card's delivery countdown; it turns urgent in the last two hours and says
+ * when the order has closed.
  */
+
+/* "5 h 12 min", "2 days 3 h", "40 min". */
+function untilText(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d >= 1) return `${d} day${d === 1 ? "" : "s"} ${h % 24} h`;
+  return `${h} h ${pad(m % 60)} min`;
+}
+const URGENT_MS = 2 * 3600 * 1000;
 
 /* A recipe's lines for the shopping list, as Mealie has them (the house
  * rules — romano peppers, bouillon for stock — live in the recipes). */
@@ -828,6 +845,14 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     this._hass = hass;
     if (!this.shadowRoot) this._build();
     if (first) { this._subscribe(); this._load(); }
+    const c = this._config || {};
+    const dl = c.deadline_entity ? hass.states[c.deadline_entity] : null;
+    const dv = c.delivery_entity ? hass.states[c.delivery_entity] : null;
+    if (dl !== this._deadlineState || dv !== this._deliveryState) {
+      this._deadlineState = dl;
+      this._deliveryState = dv;
+      this._renderCountdown();
+    }
   }
 
   getCardSize() { return 8; }
@@ -837,10 +862,12 @@ class FridgeAssistantShoppingCard extends HTMLElement {
   connectedCallback() {
     if (this._hass) { this._subscribe(); this._load(); }
     if (!this._tick) this._tick = scheduleRefresh(() => this._load());
+    if (!this._cdTimer) this._cdTimer = setInterval(() => this._renderCountdown(), 30 * 1000);
   }
 
   disconnectedCallback() {
     if (this._tick) { this._tick(); this._tick = null; }
+    if (this._cdTimer) { clearInterval(this._cdTimer); this._cdTimer = null; }
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
     if (this._unsubFa) { this._unsubFa.then((u) => u && u()).catch(() => {}); this._unsubFa = null; }
   }
@@ -1128,6 +1155,13 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .sec.added .line .n { color: var(--secondary-text-color); text-decoration: line-through; }
         .sec.added .th, .sec.have .th { opacity: .75; }
         .progress { margin-top: 12px; }
+        .countdown { margin-top: 10px; padding: 12px 14px; border-radius: 14px;
+          background: var(--secondary-background-color); display: flex; align-items: center; gap: 12px; }
+        .countdown ha-icon { --mdc-icon-size: 28px; color: var(--primary-color); }
+        .countdown .big { font-size: 22px; font-weight: 700; line-height: 1.2; }
+        .countdown .when { color: var(--secondary-text-color); font-size: 14px; }
+        .countdown.now { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+        .countdown.now ha-icon, .countdown.now .when { color: inherit; }
         .bar { height: 8px; border-radius: 999px; background: var(--divider-color); overflow: hidden; }
         .bar span { display: block; height: 100%; background: var(--primary-color); border-radius: 999px; transition: width .3s; }
         .ptext { font-size: 13px; color: var(--secondary-text-color); margin-top: 4px; }
@@ -1264,6 +1298,45 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     return base ? `${base}/g/${encodeURIComponent(this._config.group || "home")}/r/${encodeURIComponent(slug)}` : "#";
   }
 
+  /* Only the countdown box, so the rest of the list (and anything being
+   * typed into it) isn't redrawn every half minute. */
+  _renderCountdown() {
+    const box = this.shadowRoot && this.shadowRoot.getElementById("countdown");
+    if (box) box.innerHTML = this._countdownHtml();
+  }
+
+  /* How long is left to finalise the shopping: the order's edit deadline. */
+  _countdownHtml() {
+    const st = this._deadlineState;
+    // It's about the order being put together now, so only on this week's list.
+    if (!st || this._offset !== 0) return "";
+    const deadline = new Date(st.state);
+    if (Number.isNaN(deadline.getTime())) return "";
+    const now = Date.now();
+    const t = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const dayOf = (d) => d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    let delivery = "";
+    const dv = this._deliveryState;
+    const start = dv ? new Date(dv.state) : null;
+    if (start && !Number.isNaN(start.getTime()) && start > deadline) {
+      const w = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/.exec((dv.attributes && dv.attributes.delivery_window) || "");
+      delivery = ` · delivery ${dayOf(start)}, ${w ? `${w[1]}–${w[2]}` : t(start)}`;
+    }
+    let cls = "", icon = "mdi:cart-arrow-right", big, when;
+    if (now < deadline.getTime()) {
+      const left = deadline.getTime() - now;
+      if (left <= URGENT_MS) { cls = " now"; icon = "mdi:cart-clock"; }
+      big = `Finalise in ${untilText(left)}`;
+      when = `Order closes ${dayOf(deadline)}, ${t(deadline)}${delivery}`;
+    } else {
+      icon = "mdi:cart-check";
+      big = "Order finalised";
+      when = `Closed ${dayOf(deadline)}, ${t(deadline)}${delivery}`;
+    }
+    return `<div class="countdown${cls}"><ha-icon icon="${icon}"></ha-icon>
+      <div><div class="big">${esc(big)}</div><div class="when">${esc(when)}</div></div></div>`;
+  }
+
   /* Notes are edited on Mealie's meal planner. */
   _plannerLink() {
     const base = String(this._config.mealie_url || "").replace(/\/+$/, "");
@@ -1318,7 +1391,8 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       <button class="refresh" data-act="prev" title="Week before"><ha-icon icon="mdi:chevron-left"></ha-icon></button>
       <button class="refresh" data-act="next" title="Week after"><ha-icon icon="mdi:chevron-right"></ha-icon></button>
       <button class="refresh" data-act="refresh" title="Refresh"><ha-icon icon="mdi:refresh"></ha-icon></button></div>
-      <div class="sub">${esc(sub)}</div>`;
+      <div class="sub">${esc(sub)}</div>
+      <div id="countdown">${this._countdownHtml()}</div>`;
     if (!this._groups) {
       body.innerHTML = head + (this._error ? `<div class="err">${esc(this._error)}</div>` : `<div class="empty">Loading…</div>`);
       return;

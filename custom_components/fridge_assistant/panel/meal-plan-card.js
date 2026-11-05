@@ -186,6 +186,15 @@ function shoppingWeek(weekStart, planDay, offset = 0) {
   return { start, end: addDays(start, 6), today };
 }
 
+/* The plan week an order is for: the first week starting on or after the day
+ * it arrives (a Friday delivery feeds the week from Saturday), or after the
+ * day it closes when there's no delivery date. */
+function orderWeekStart(arrives, weekStart) {
+  const ws = Math.max(0, WEEKDAYS.indexOf(String(weekStart).toLowerCase()));
+  const d = new Date(arrives); d.setHours(12, 0, 0, 0);
+  return addDays(d, (ws - d.getDay() + 7) % 7);
+}
+
 /* "Last week", "This week", "Next week"… for a week starting `start`,
  * counted from the calendar week today is in. */
 function weekName(start, weekStart) {
@@ -745,7 +754,8 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
  * With deadline_entity (a timestamp: when the order stops taking changes)
  * the list shows how long is left to finalise the shopping, like the unpack
  * card's delivery countdown; it turns urgent in the last two hours and says
- * when the order has closed.
+ * when the order has closed. It shows on the week the order is for: the
+ * first plan week starting on or after the delivery (or closing) day.
  */
 
 /* "5 h 12 min", "2 days 3 h", "40 min". */
@@ -1312,8 +1322,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
   /* How long is left to finalise the shopping: the order's edit deadline. */
   _countdownHtml() {
     const st = this._deadlineState;
-    // It's about the order being put together now, so only on this week's list.
-    if (!st || this._offset !== 0) return "";
+    if (!st) return "";
     const deadline = new Date(st.state);
     if (Number.isNaN(deadline.getTime())) return "";
     const now = Date.now();
@@ -1326,6 +1335,10 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       const w = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/.exec((dv.attributes && dv.attributes.delivery_window) || "");
       delivery = ` · delivery ${dayOf(start)}, ${w ? `${w[1]}–${w[2]}` : t(start)}`;
     }
+    // Only on the list for the week this order feeds.
+    const arrives = delivery ? start : deadline;
+    const shown = this._week || shoppingWeek(this._config.week_start, this._config.plan_day, this._offset);
+    if (isoDate(orderWeekStart(arrives, this._config.week_start)) !== isoDate(shown.start)) return "";
     let cls = "", icon = "mdi:cart-arrow-right", big, when;
     if (now < deadline.getTime()) {
       const left = deadline.getTime() - now;

@@ -381,8 +381,10 @@ changes, e.g. the Ocado integration's next edit deadline) a box under the
 title counts down to it, like the unpack card's delivery countdown:
 "Finalise in 5 h 12 min — Order closes Thu 5 Nov, 23:12". It turns urgent in
 the last two hours, says "Order finalised" once the deadline has passed, and
-adds the delivery window when `delivery_entity` is set. It shows on the
-current week only.
+adds the delivery window when `delivery_entity` is set. It shows on the week
+the order is for: the first plan week starting on or after the delivery day
+(or the closing day without a delivery entity), so an order closing Thu 12
+Nov for delivery Fri 13 Nov shows on the week from Sat 14 Nov.
 
 `fridge_assistant/stock_check` (websocket) does the sums for any list of
 recipe lines.

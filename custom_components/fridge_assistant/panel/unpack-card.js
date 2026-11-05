@@ -828,24 +828,18 @@ class FridgeAssistantUnpackCard extends HTMLElement {
   }
 
   _rowHtml(l, selUid) {
+    // Where it went, or how many are still to put away. Where it should go
+    // shows when the line is tapped, so it isn't repeated on every row.
     const where = (pl) => LOCATION_LABEL[pl.location] || "";
-    let chip;
-    if (l.qty <= 0) {
-      const places = [...new Set(l.placed.map(where).filter(Boolean))];
-      chip = places.join(", ");
-    } else if (l.placed.length) {
-      chip = `${l.qty} left`;
-    } else {
-      const fixed = l.info.location && l.info.location !== "auto" ? l.info.location : null;
-      const m = this._cachedMatch(l.name);
-      chip = LOCATION_LABEL[fixed || (m && m.location) || ""] || "";
-    }
+    let chip = "";
+    if (l.qty <= 0) chip = [...new Set(l.placed.map(where).filter(Boolean))].join(", ");
+    else if (l.placed.length) chip = `${l.qty} left`;
     const look = this._look(l);
     return `<button class="row${l.qty <= 0 ? " done" : ""}${l.uid === selUid ? " on" : ""}" data-act="line" data-uid="${esc(l.uid)}">
       <span class="th" style="--tint:${look.aisle.color}">${esc(look.emoji)}</span>
       <span class="n">${esc(l.summary)}</span>
       ${l.qty <= 0 ? `<ha-icon class="tick" icon="mdi:check-circle"></ha-icon>` : ""}
-      <span class="chip">${esc(chip)}</span>
+      ${chip ? `<span class="chip">${esc(chip)}</span>` : ""}
     </button>`;
   }
 

@@ -9,10 +9,11 @@
  * Freezer or Fridge, and what's going in when it's only part of the meal,
  * e.g. "Carbonara sauce", remembered per recipe) and prints a sticker for
  * each portion. Meals already made show a tick.
- * Loose ingredients on the plan (notes such as "Avocado") get an "Eaten"
- * button that takes it out of Fridge Assistant: the amount at the start of
- * the note ("40 g cannellini beans", "½ avocado", "1 tin chickpeas"), or one
- * of the thing when there's none.
+ * Notes on the plan get an "Eaten" button that takes them out of Fridge
+ * Assistant. A note with text is a small meal whose text lists its
+ * ingredients, one per line ("30 g oats", "½ banana"); a note with only a
+ * title is one loose ingredient ("Avocado", "40 g cannellini beans", "1 tin
+ * chickpeas"), one of the thing when there's no amount.
  *
  *   type: custom:fridge-assistant-meal-plan-card
  *   day: 0                          # 0 = today, 1 = tomorrow, ...
@@ -66,7 +67,7 @@ const AMOUNT_RE = new RegExp(
 function parseAmount(text) {
   const raw = String(text || "").trim();
   const m = AMOUNT_RE.exec(raw);
-  if (!m || !m[3]) return { quantity: 1, unit: "each", food: raw };
+  if (!m || !m[3]) return { quantity: 1, unit: "each", food: raw, explicit: false };
   let q = m[1].toLowerCase().replace(",", ".");
   let quantity;
   if (q.startsWith("half")) quantity = 0.5;
@@ -76,7 +77,43 @@ function parseAmount(text) {
     const frac = Object.keys(FRACTIONS).find((f) => q.includes(f));
     quantity = (parseFloat(q.replace(frac || "", "")) || 0) + (frac ? FRACTIONS[frac] : 0);
   }
-  return { quantity: quantity || 1, unit: m[2] ? m[2].toLowerCase() : "each", food: m[3].trim() };
+  return { quantity: quantity || 1, unit: m[2] ? m[2].toLowerCase() : "each", food: m[3].trim(), explicit: true };
+}
+
+/* What a note on the plan (no recipe) is made of.
+ *
+ * A note with text is a small meal: the title names it ("Evie's breakfast")
+ * and the text lists its ingredients, one per line, written like a recipe
+ * line ("30 g oats", "½ banana", "1 tbsp peanut butter"). A note with only a
+ * title is one loose ingredient ("Avocado", "40 g cannellini beans"), which
+ * counts only in a breakfast, lunch or dinner slot (other notes there are
+ * reminders, not food).
+ *
+ * Returns {items: [{quantity, unit, food, text}], unreadable: [text]}. A line
+ * that reads like a dish rather than one thing ("Pumpkin, walnut and flaxseed
+ * porridge"), or a longer name with no amount ("Red pepper sauce pasta"), is
+ * unreadable: it can't be shopped for, so it's flagged instead of guessed at.
+ * Without an amount, only a name of a word or two counts ("Blueberries"). */
+function noteItems(entry) {
+  const items = [];
+  const unreadable = [];
+  if (!entry || entry.recipe) return { items, unreadable };
+  const text = String(entry.description || "").trim();
+  if (text) {
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.replace(/^\s*(?:[-*•·]|\d+[.)])\s+/, "").trim();
+      if (!line) continue;
+      const a = parseAmount(line);
+      const words = a.food.split(/\s+/).filter(Boolean).length;
+      // Without an amount only a short name is taken as one thing.
+      const dishy = /[,·&+]|\b(?:with|and|on|in)\b/i.test(a.food) || words > (a.explicit ? 5 : 2);
+      if (!a.food || (!a.explicit && dishy)) unreadable.push(line);
+      else items.push({ ...a, text: line });
+    }
+  } else if (entry.title && ["breakfast", "lunch", "dinner"].includes(entry.entry_type)) {
+    items.push({ ...parseAmount(entry.title), text: entry.title });
+  }
+  return { items, unreadable };
 }
 
 const pad = (n) => String(n).padStart(2, "0");
@@ -291,45 +328,61 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     return `${this._config.mealie_url}/g/${encodeURIComponent(this._config.group)}/r/${encodeURIComponent(recipe.slug)}`;
   }
 
-  /* A loose ingredient on the plan (a note such as "Avocado") was eaten: take
-   * one of it out of Fridge Assistant and record it on the to-do list so the
-   * card remembers. */
+  /* A note on the plan was eaten: take its ingredients (its lines, or the one
+   * loose ingredient in its title, such as "Avocado") out of Fridge Assistant
+   * and record it on the to-do list so the card remembers. */
   async _eaten(entry) {
     const id = String(entry.mealplan_id);
-    const amount = parseAmount(entry.title);
-    const food = amount.food;
-    if (!food || this._busy.has(id) || this._done.has(id)) return;
+    const { items } = noteItems(entry);
+    if (!items.length || this._busy.has(id) || this._done.has(id)) return;
     this._busy.add(id);
     this._notes.delete(id);
     this._render();
     try {
       const res = await this._hass.callWS({
         type: "call_service", domain: "fridge_assistant", service: "consume_ingredients",
-        service_data: { ingredients: [{ food, quantity: amount.quantity, unit: amount.unit }] }, return_response: true,
+        service_data: { ingredients: items.map((a) => ({ food: a.food, quantity: a.quantity, unit: a.unit })) }, return_response: true,
       });
-      const line = (res && res.response && res.response.lines && res.response.lines[0]) || {};
-      const name = line.template || food;
-      const unit = line.amount_unit;
-      if (line.status === "taken" || line.status === "short") {
-        const left = (line.taken || []).reduce((sum, t) => sum + (t.left || 0), 0);
-        const took = unit === "each" ? `${fmtAmount(line.need, unit)} ${name.toLowerCase()}` : `${fmtAmount(line.need, unit)} of ${name.toLowerCase()}`;
-        const rest = line.status === "short" ? " · that was the last of it"
-          : left > 0 ? ` · ${fmtAmount(left, unit)} left in that pack` : " · that pack is finished";
-        this._notes.set(id, { text: `Took ${took}${rest}` });
+      const got = (res && res.response && res.response.lines) || [];
+      const took = [];
+      const problems = [];
+      items.forEach((amount, n) => {
+        const line = got[n] || {};
+        const food = amount.food;
+        const name = String(line.template || food).toLowerCase();
+        const unit = line.amount_unit;
+        if (line.status === "taken" || line.status === "short") {
+          const left = (line.taken || []).reduce((sum, t) => sum + (t.left || 0), 0);
+          const what = unit === "each" ? `${fmtAmount(line.need, unit)} ${name}` : `${fmtAmount(line.need, unit)} of ${name}`;
+          // One ingredient gets the detail; a list just says what came out.
+          const rest = items.length > 1 ? (line.status === "short" ? " (the last of it)" : "")
+            : line.status === "short" ? " · that was the last of it"
+              : left > 0 ? ` · ${fmtAmount(left, unit)} left in that pack` : " · that pack is finished";
+          took.push(`${what}${rest}`);
+        } else if (line.status === "negligible") {
+          // A pinch of something: nothing to take, nothing wrong.
+        } else {
+          problems.push({
+            untracked: `${food} isn't tracked in Fridge Assistant`,
+            not_in_stock: `there's no ${name} in Fridge Assistant`,
+            no_amount_tracked: `there's no ${name} in Fridge Assistant`,
+            no_conversion: amount.unit === "each"
+              ? `Fridge Assistant can't tell how much one ${name} is; put the amount in the plan, e.g. "40 g ${food.toLowerCase()}"`
+              : `Fridge Assistant can't convert ${amount.unit} of ${name}`,
+            no_quantity: `no amount to take for ${food}`,
+          }[line.status] || `nothing taken for ${food} (${line.status || "unknown"})`);
+        }
+      });
+      if (took.length) {
+        // Something came out, so it counts as eaten; say what didn't.
+        const miss = problems.length ? ` · not taken: ${problems.join("; ")}` : "";
+        this._notes.set(id, { text: `Took ${took.join(", ")}${miss}`, bad: problems.length > 0 });
         await this._recordDone(entry, { eaten: true, at: new Date().toISOString() });
         this._done.set(id, { eaten: true });
         this._open = null;
       } else {
-        const why = {
-          untracked: `${food} isn't tracked in Fridge Assistant`,
-          not_in_stock: `There's no ${name.toLowerCase()} in Fridge Assistant`,
-          no_amount_tracked: `There's no ${name.toLowerCase()} in Fridge Assistant`,
-          no_conversion: amount.unit === "each"
-            ? `Fridge Assistant can't tell how much one ${name.toLowerCase()} is; put the amount in the plan, e.g. "40 g ${food.toLowerCase()}"`
-            : `Fridge Assistant can't convert ${amount.unit} of ${name.toLowerCase()}`,
-          no_quantity: "No amount to take",
-        }[line.status] || `Nothing taken (${line.status || "unknown"})`;
-        this._notes.set(id, { text: why, bad: true });
+        const why = problems.join("; ") || "Nothing taken";
+        this._notes.set(id, { text: why.charAt(0).toUpperCase() + why.slice(1), bad: true });
       }
     } catch (err) {
       this._notes.set(id, { text: `Couldn't take it out: ${err.message || err}`, bad: true });
@@ -566,7 +619,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       const busy = this._busy.has(id);
       const open = this._open === id;
       const note = this._notes.get(id);
-      const sub = done ? "Eaten" : entry.description || "";
+      const sub = done ? "Eaten" : String(entry.description || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).join(" · ");
       return `<div class="meal note ${done ? "is-made" : ""}">
         <button class="meal-row" data-act="toggle" data-id="${id}" aria-expanded="${open}">
           <div class="pic"><ha-icon icon="mdi:food-apple-outline"></ha-icon></div>
@@ -632,7 +685,9 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     const entries = this._entries();
     this.classList.toggle("past", offset < 0);
     // Notes that aren't a meal slot (e.g. a side note for one person) go below.
-    const extras = entries.filter((e) => !e.recipe && !["breakfast", "lunch", "dinner"].includes(e.entry_type));
+    // A note listing its ingredients is a meal wherever it's planned.
+    const extras = entries.filter((e) => !e.recipe && !["breakfast", "lunch", "dinner"].includes(e.entry_type)
+      && !noteItems(e).items.length);
     const meals = entries.filter((e) => !extras.includes(e));
     const sections = SECTIONS.map((s) => ({ ...s, items: meals.filter((e) => SECTION_OF[e.entry_type] === s.key) }))
       .filter((s) => s.items.length);
@@ -667,7 +722,7 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
 /* ---- Shopping list card ---------------------------------------------------
  *
  * A week's meal plan as a shopping list in four sections: Need (what the
- * recipes use and stock doesn't cover), Check (stock covers it, but it's
+ * recipes and notes use and stock doesn't cover), Check (stock covers it, but it's
  * worth a look: opened, a guessed amount, used day to day, only just enough,
  * may go off, or not checked for a month), Have, and Added (in the basket). Tap an ingredient to see the
  * meals it's for and move it between sections. Have asks how much there is
@@ -856,10 +911,19 @@ class FridgeAssistantShoppingCard extends HTMLElement {
           meals.push(e);
           const issues = recipeIssues(recipe);
           if (issues.length && !warnings.some((w) => w.slug === recipe.slug)) warnings.push({ name: recipe.name, slug: recipe.slug, issues });
-        } else if (["breakfast", "lunch", "dinner"].includes(e.entry_type) && e.title) {
-          const a = parseAmount(e.title);
-          if (!ignore.has(a.food.toLowerCase())) {
-            lines.push(mark({ food: a.food.toLowerCase(), quantity: a.quantity, unit: a.unit === "each" ? "" : a.unit, source: `${e.title} · ${day}`, date: e.mealplan_date }));
+        } else {
+          // A note: its ingredient lines (or the title, for one loose ingredient).
+          const { items, unreadable } = noteItems(e);
+          const name = e.title || "Note";
+          // A note with its own ingredient list is a meal; a loose one isn't.
+          if (!reserved && e.description && items.length) meals.push(e);
+          for (const a of items) {
+            if (ignore.has(a.food.toLowerCase())) continue;
+            lines.push(mark({ food: a.food.toLowerCase(), quantity: a.quantity, unit: a.unit === "each" ? "" : a.unit, source: `${name} · ${day}`, date: e.mealplan_date }));
+          }
+          if (unreadable.length && !reserved) {
+            warnings.push({ name: `${name} · ${day}`, note: true,
+              issues: unreadable.map((t) => `couldn't read “${t}” — list one ingredient per line, with its amount, e.g. “30 g oats”`) });
           }
         }
       };
@@ -1200,6 +1264,12 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     return base ? `${base}/g/${encodeURIComponent(this._config.group || "home")}/r/${encodeURIComponent(slug)}` : "#";
   }
 
+  /* Notes are edited on Mealie's meal planner. */
+  _plannerLink() {
+    const base = String(this._config.mealie_url || "").replace(/\/+$/, "");
+    return base ? `${base}/household/mealplan/planner/edit` : "#";
+  }
+
   _stillFormHtml(g, sec) {
     const f = this._form;
     const k = esc(g.key);
@@ -1273,8 +1343,8 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     const progress = toGet ? `<div class="progress"><div class="bar"><span style="width:${Math.round(added.length / toGet * 100)}%"></span></div>
       <div class="ptext">${added.length} of ${toGet} in the basket${check.length ? ` · ${check.length} to check` : ""}</div></div>` : "";
     const warn = (this._warnings || []).length ? `<details class="warn"${this._warnOpen ? " open" : ""}><summary><ha-icon icon="mdi:alert-outline"></ha-icon>
-        ${this._warnings.length} recipe${this._warnings.length === 1 ? "" : "s"} to tidy in Mealie, so the list is right</summary>
-        ${this._warnings.map((w) => `<div class="wrec"><a href="${esc(this._recipeLink(w.slug))}" target="_blank" rel="noopener">${esc(w.name)}</a>
+        ${this._warnings.length} ${this._warnings.every((w) => w.note) ? "note" : this._warnings.some((w) => w.note) ? "recipe or note" : "recipe"}${this._warnings.length === 1 ? "" : "s"} to tidy in Mealie, so the list is right</summary>
+        ${this._warnings.map((w) => `<div class="wrec"><a href="${esc(w.note ? this._plannerLink() : this._recipeLink(w.slug))}" target="_blank" rel="noopener">${esc(w.name)}</a>
           <ul>${w.issues.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`).join("")}</details>` : "";
     body.innerHTML = head + progress + warn
       + section("need", "Need", need, "Nothing else to get.")

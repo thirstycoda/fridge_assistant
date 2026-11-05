@@ -288,11 +288,24 @@ and **Print label**, where you pick how many portions (containers) and
 Freezer or Fridge; the cooked meal is added as a dish with that many portions
 and a sticker is printed for each. A **What's going in** box names the
 container — change it when only part of the meal is frozen ("Carbonara
-sauce"); it's remembered per recipe for next time. Loose ingredients on the plan (notes such
-as "Avocado") get an **Eaten** button, which takes it out of stock with
-`consume_ingredients`: the amount at the start of the note ("40 g cannellini
-beans", "½ avocado", "1 tin chickpeas"), or one "each" (converted through the
-template's `per`) when the note has none.
+sauce"); it's remembered per recipe for next time. Notes on the plan get an
+**Eaten** button, which takes them out of stock with `consume_ingredients`.
+A note with text is a small meal: the title names it ("Evie's breakfast") and
+the text lists its ingredients one per line, written like recipe lines:
+
+```
+30 g oats
+½ banana
+1 tbsp peanut butter
+100 ml oat milk
+```
+
+A note with only a title (in a breakfast, lunch or dinner slot) is one loose
+ingredient ("Avocado", "40 g cannellini beans", "1 tin chickpeas"). Without an
+amount it's one "each" (converted through the template's `per`), and only a
+name of a word or two counts that way; a longer line or one that reads like a
+dish ("Pumpkin, walnut and flaxseed porridge") is flagged on the shopping list
+rather than guessed at.
 A meal counts as made once `todo_entity` holds a line whose JSON description
 has its `mealplan_id` and a `done` record; it then shows a tick.
 
@@ -329,8 +342,10 @@ thumbnail: the product photo from the last pack scanned, else the food's
 emoji. A bar shows how much of the shop is in the basket. Each section heading folds its section away (remembered on the device). Ingredients are summed per ingredient template in its unit, so two
 recipes needing a pepper each with one in stock show 1 under Need and 1
 under Have. Tap an ingredient for the meals it's for and **Added** / **Have**
-buttons. Meals already made are left out, and loose ingredients on the plan
-count too.
+buttons. Meals already made are left out, and notes on the plan count too:
+each ingredient line of a note, or a loose ingredient in a note's title. Note
+lines it can't read are listed with the recipes to tidy, linking to Mealie's
+planner.
 
 Fridge Assistant is the source of truth for what's in stock, so **Have** asks
 how much you have and where it is, and adds it (`fridge_assistant/stock_have`)

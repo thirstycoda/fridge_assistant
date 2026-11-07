@@ -74,12 +74,29 @@ def normalize_barcode(value: Any) -> str:
     return "".join(ch for ch in str(value or "") if ch.isdigit())
 
 
+def is_store_only(code: str) -> bool:
+    """True for GS1 restricted-circulation numbers, which each shop assigns
+    for itself (M&S packs carry 8-digit 00…/29… codes, weighed and loose
+    goods 2… codes). The same number means a different product elsewhere,
+    so a worldwide database can't say what it is: 29000906 is M&S spring
+    onions but Trader Joe's tomato soup on OpenFoodFacts.
+    """
+    code = normalize_barcode(code)
+    if len(code) == 8:
+        return code[0] in "02"
+    if len(code) == 12:   # UPC-A is EAN-13 with a leading 0
+        code = "0" + code
+    if len(code) == 13:
+        return code[:2] in ("02", "04") or code[0] == "2"
+    return False
+
+
 async def async_lookup_barcode(
     hass: HomeAssistant, code: str
 ) -> dict[str, Any] | None:
     """Return product details for an EAN/UPC, or None if unknown/unreachable."""
     code = normalize_barcode(code)
-    if not code:
+    if not code or is_store_only(code):
         return None
     session = async_get_clientsession(hass)
     try:

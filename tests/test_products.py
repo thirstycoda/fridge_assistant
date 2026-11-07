@@ -40,5 +40,17 @@ class TestPickName(unittest.TestCase):
         self.assertEqual(products.pick_name({}, "en"), "")
 
 
+class TestStoreOnly(unittest.TestCase):
+    def test_shop_codes_are_store_only(self):
+        # M&S spring onions, tofu, garlic, peas; a weighed red-onion code.
+        for code in ["29000906", "00124485", "00283212", "29086566", "290834787844", "2012345678901", "0412345678905"]:
+            self.assertTrue(products.is_store_only(code), code)
+
+    def test_global_codes_are_not(self):
+        # Alpro, Marigold (EAN-8 with a country prefix), a UPC-A, a German EAN.
+        for code in ["5411188118121", "50160884", "628110454492", "4061462596162", "8005110001673"]:
+            self.assertFalse(products.is_store_only(code), code)
+
+
 if __name__ == "__main__":
     unittest.main()

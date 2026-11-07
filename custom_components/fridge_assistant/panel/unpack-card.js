@@ -8,6 +8,13 @@
  * once everything on it is put away, ticked off; ticked lines stay on the list
  * showing where things went, with an undo.
  *
+ * Scan and Type float at the bottom of the screen and open a bottom sheet
+ * (camera, or barcode box + Look up). A barcode that matches a line closes the
+ * sheet, scrolls to that line and puts the cursor in its "How much" box. One
+ * that doesn't match keeps the sheet open with the line picker, amount and
+ * places; a place can't be pressed until a line (or "not on the list") is
+ * picked, so a new barcode is learned against the right product.
+ *
  *   type: custom:fridge-assistant-unpack-card
  *   todo_entity: todo.ocado_delivery
  *   delivery_entity: sensor.ocado_uk_deliveries_next_delivery   # optional countdown
@@ -177,7 +184,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
-    if (!this.shadowRoot) this._build();
+    if (!this.shadowRoot) { this._build(); this._showFabs(this.isConnected); }
     if (first || !this._unsub) this._subscribe();
     const ent = this._config && this._config.delivery_entity;
     const st = ent ? hass.states[ent] : null;
@@ -189,10 +196,13 @@ class FridgeAssistantUnpackCard extends HTMLElement {
   connectedCallback() {
     if (this._hass && !this._unsub) this._subscribe();
     if (!this._tick) this._tick = setInterval(() => this._renderHead(), 30000);
+    this._showFabs(true);
   }
 
   disconnectedCallback() {
     if (this._tick) { clearInterval(this._tick); this._tick = null; }
+    this._closeSheet();
+    this._showFabs(false);
     this._stopCamera();
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
   }
@@ -257,6 +267,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       barcode: keep ? keep.barcode : null,
       qty: Math.max(1, line.qty),
       suggested: null,
+      pickChosen: true,
     };
     this._renderSel();
     this._renderList();
@@ -288,7 +299,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     return bestScore >= 0.5 ? best : null;
   }
 
-  async _onBarcode(raw) {
+  async _onBarcode(raw, fromCamera = false) {
     const code = String(raw || "").replace(/\D/g, "");
     if (!code) { this._status("That isn't a product barcode.", true); return; }
     this._stopCamera();
@@ -301,7 +312,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const name = (known && known.name) || (product && product.name) || null;
     const line = await this._bestLine(name) || (product && product.brand
       ? await this._bestLine(`${product.brand} ${product.name}`) : null);
-    this._sel = {
+    const sel = {
       line,
       barcode: code,
       product: name ? {
@@ -313,19 +324,42 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       } : null,
       qty: line ? line.qty : 1,
       suggested: null,
+      fromCamera,
+      pickChosen: !!line,
     };
-    if (!name) this._status(`Barcode ${code} isn't known yet — tap its line below, then pick where it goes.`);
-    else if (!line) this._status(`Not on the list — pick its line below, or just pick where it goes.`);
-    else this._status("");
+    this._sel = sel;
+    if (line) {
+      // Matched: put it away from its line in the list.
+      this._closeSheet(false);
+      this._status("");
+    } else {
+      // Not matched: the sheet stays up until its line is picked.
+      this._openSheet("sel");
+      this._status(!this._lines.length
+        ? (name ? "Not on the list — pick where it goes." : `Barcode ${code} isn't known and there's nothing on the list to match it to.`)
+        : name ? "Not matched to a line — pick its line, then where it goes."
+          : `Barcode ${code} isn't known yet — pick its line, then where it goes.`);
+    }
     this._renderSel();
     this._renderList();
     const sugLine = line ? await this._lineLocation(line) : null;
     const sugProd = !sugLine && name ? ((await this._match(name)) || {}).location : null;
-    if (this._sel && this._sel.barcode === code) {
-      this._sel.suggested = sugLine || sugProd || null;
-      await this._guessAmount(this._sel);
+    if (this._sel === sel) {
+      sel.suggested = sugLine || sugProd || null;
+      await this._guessAmount(sel);
+      if (this._sel !== sel) return;
       this._renderSel();
+      if (line) this._focusAmount(line);
     }
+  }
+
+  /* Scroll to a matched line and put the cursor in its How much box. */
+  _focusAmount(line) {
+    const root = this.shadowRoot;
+    const row = root.querySelector(`#list [data-act="line"][data-uid="${CSS.escape(line.uid)}"]`);
+    if (row) row.scrollIntoView({ behavior: "smooth", block: "start" });
+    const amt = root.getElementById("amt");
+    if (amt) { amt.focus({ preventScroll: true }); amt.select(); }
   }
 
   /* Best guess of how much one pack holds, for the amount box: the scanned
@@ -368,6 +402,14 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const qty = Math.max(1, Number(sel.qty) || 1);
     const contents = line ? line.name : (sel.product && sel.product.name) || "";
     if (!contents) { this._status("Tap the product's line first.", true); return; }
+    // A scan that wasn't matched waits for its line to be picked (or "not on
+    // the list"), so the barcode is learned against the right product.
+    if (!line && sel.barcode && this._lines.length && !sel.pickChosen) {
+      this._status("Pick which line it is first (or “not on the list”).", true);
+      const pick = this.shadowRoot.getElementById("pick");
+      if (pick) pick.focus();
+      return;
+    }
     const notes = [];
     if (line) {
       notes.push(this._config.notes);
@@ -404,12 +446,16 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         await this._saveLine(line, { qty: left, placed });
       }
       const amt = item.amount ? ` (${item.amount} ${item.amount_unit === "each" ? "" : item.amount_unit})`.replace(" )", ")") : "";
-      this._status(`✓ ${added ? added.name : contents}${qty > 1 ? ` ×${qty}` : ""}${amt} → ${LOCATION_LABEL[location]}`
-        + (added && added.code ? ` (label ${added.code})` : ""));
+      const msg = `✓ ${added ? added.name : contents}${qty > 1 ? ` ×${qty}` : ""}${amt} → ${LOCATION_LABEL[location]}`
+        + (added && added.code ? ` (label ${added.code})` : "");
       const again = sel.fromCamera;
       this._sel = null;
+      this._closeSheet(false);
+      this._status(msg);
       this._renderSel();
-      if (again) this._startCamera();
+      this._renderList();
+      // Scanning with the camera carries on with the next item.
+      if (again) { this._lastDone = msg; this._openSheet("scan"); }
     } catch (err) {
       this._status(`Couldn't add it: ${err.message || err}`, true);
     } finally {
@@ -453,27 +499,28 @@ class FridgeAssistantUnpackCard extends HTMLElement {
 
   async _startCamera() {
     if (this._cam) return;
-    const box = this.shadowRoot.getElementById("cam");
     const video = this.shadowRoot.getElementById("video");
+    if (!video) return;
     const bd = "BarcodeDetector" in window;
-    const zxing = bd ? null : await loadZXing();
-    if (!(bd || zxing) || !window.isSecureContext || !navigator.mediaDevices) {
-      this._status("Live scanning needs HTTPS and a camera — type the barcode instead.", true);
-      this._showManual(true);
-      return;
-    }
     const cam = { stopped: false, stream: null, timer: null };
     this._cam = cam;
-    box.hidden = false;
-    this._renderHead();
+    const zxing = bd ? null : await loadZXing();
+    if (cam.stopped) return;
+    if (!(bd || zxing) || !window.isSecureContext || !navigator.mediaDevices) {
+      this._stopCamera();
+      this._openSheet("type");
+      this._status("Live scanning needs HTTPS and a camera — type the barcode instead.", true);
+      return;
+    }
     try {
       cam.stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, aspectRatio: { ideal: 4 / 3 } },
       });
     } catch (e) {
+      if (cam.stopped) return;
       this._stopCamera();
+      this._openSheet("type");
       this._status("No camera access — type the barcode instead.", true);
-      this._showManual(true);
       return;
     }
     if (cam.stopped) { cam.stream.getTracks().forEach((t) => t.stop()); return; }
@@ -481,7 +528,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     try { await video.play(); } catch (e) { /* autoplay quirks */ }
     const found = (raw) => {
       if (cam.stopped) return;
-      this._onBarcode(raw).then(() => { if (this._sel) this._sel.fromCamera = true; });
+      this._onBarcode(raw, true);
     };
     if (bd) {
       const det = await makeDetector();
@@ -519,7 +566,8 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       };
       tick();
     }
-    this._status("Point the camera at the barcode.");
+    this._status(this._lastDone ? `${this._lastDone} — point at the next barcode.` : "Point the camera at the barcode.");
+    this._lastDone = null;
   }
 
   _stopCamera() {
@@ -529,17 +577,64 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (cam.timer) clearTimeout(cam.timer);
     if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
     this._cam = null;
-    if (this.shadowRoot) {
-      this.shadowRoot.getElementById("cam").hidden = true;
-      this.shadowRoot.getElementById("video").srcObject = null;
-      this._renderHead();
-    }
+    const video = this.shadowRoot && this.shadowRoot.getElementById("video");
+    if (video) video.srcObject = null;
   }
 
-  _showManual(show) {
-    const m = this.shadowRoot.getElementById("manual");
-    m.hidden = !show;
-    if (show) setTimeout(() => this.shadowRoot.getElementById("code").focus(), 50);
+  // ---- bottom sheet -----------------------------------------------------------
+
+  /* Floating Scan / Type buttons, in the top layer so nothing on the page
+   * (HA's scrolling view, card containment) can clip or cover them. */
+  _showFabs(on) {
+    const f = this.shadowRoot && this.shadowRoot.getElementById("fabs");
+    if (!f || !f.showPopover) return;
+    try { if (on) f.showPopover(); else f.hidePopover(); } catch (e) { /* already in that state */ }
+  }
+
+  /* mode: "scan" (camera), "type" (barcode box) or "sel" (a scan that didn't
+   * match a line: picker, amount and places). */
+  _openSheet(mode) {
+    const root = this.shadowRoot;
+    if (!root) return;
+    this._stopCamera();
+    this._sheet = { mode };
+    const dlg = root.getElementById("sheet");
+    const selNode = root.getElementById("sel");
+    if (selNode && dlg.contains(selNode)) root.getElementById("list").before(selNode);
+    const title = { scan: "Scan a barcode", type: "Type a barcode", sel: "Which item is it?" }[mode];
+    dlg.innerHTML = `<div class="sbody">
+      <div class="grab"></div>
+      <div class="shead"><div class="stitle">${title}</div>
+        <button class="close" data-act="sheetclose" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button></div>
+      ${mode === "scan" ? `<div class="cam" id="cam"><video id="video" playsinline muted></video><div class="frame"></div></div>` : ""}
+      ${mode === "type" ? `<div class="manual">
+        <input id="code" inputmode="numeric" placeholder="Barcode number" autocomplete="off" enterkeyhint="search">
+        <button class="primary" data-act="go">Look up</button></div>` : ""}
+      <div class="status" id="sst"></div>
+      <div id="sslot"></div>
+    </div>`;
+    if (!dlg.open) dlg.showModal();
+    if (mode === "scan") this._startCamera();
+    if (mode === "type") setTimeout(() => { const c = root.getElementById("code"); if (c) c.focus(); }, 50);
+    if (mode === "sel") this._placeSel();
+  }
+
+  /* cancel: a scan still waiting in the sheet is dropped. */
+  _closeSheet(cancel = true) {
+    const sh = this._sheet;
+    if (!sh) return;
+    this._sheet = null;
+    this._stopCamera();
+    const root = this.shadowRoot;
+    if (!root) return;
+    const dlg = root.getElementById("sheet");
+    const selNode = root.getElementById("sel");
+    if (selNode && dlg.contains(selNode)) root.getElementById("list").before(selNode);
+    if (cancel && sh.mode === "sel") this._sel = null;
+    if (dlg.open) dlg.close();
+    dlg.innerHTML = "";
+    this._renderSel();
+    this._renderList();
   }
 
   // ---- rendering ------------------------------------------------------------
@@ -548,7 +643,33 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = `
       <style>
-        ha-card { padding: 16px; }
+        /* Room at the bottom so the floating buttons don't sit on the last line. */
+        ha-card { padding: 16px 16px 88px; }
+        .fabs { display: none; position: fixed; margin: 0; padding: 0; border: none; background: transparent; overflow: visible;
+          inset: auto calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) auto;
+          align-items: center; gap: 12px; }
+        .fabs:popover-open { display: flex; }
+        @supports not selector(:popover-open) { .fabs { display: flex; z-index: 5; } }
+        .fab { display: flex; align-items: center; justify-content: center; padding: 0; width: 56px; height: 56px;
+          border-radius: 16px; border: none; box-shadow: 0 3px 10px rgba(0,0,0,.3); }
+        .fab ha-icon { --mdc-icon-size: 26px; }
+        .fab.mini { width: 48px; height: 48px; border-radius: 14px; background: var(--card-background-color); }
+        .fab.mini ha-icon { --mdc-icon-size: 22px; }
+        dialog.sheet { border: none; padding: 0; margin: auto auto 0; width: min(560px, 100vw); max-width: 100vw;
+          max-height: 90vh; border-radius: 22px 22px 0 0; background: var(--card-background-color, #fff);
+          color: var(--primary-text-color); box-shadow: 0 -6px 30px rgba(0,0,0,.3); overflow: hidden; }
+        dialog.sheet[open] { display: flex; flex-direction: column; animation: sheet-up .22s ease-out; }
+        dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
+        @keyframes sheet-up { from { transform: translateY(48px); opacity: .5; } }
+        .sbody { padding: 8px 18px calc(20px + env(safe-area-inset-bottom, 0px)); overflow-y: auto; }
+        .grab { width: 36px; height: 4px; border-radius: 2px; margin: 0 auto 10px; background: var(--divider-color); }
+        .shead { display: flex; align-items: center; gap: 8px; }
+        .stitle { flex: 1 1 auto; font-size: 18px; font-weight: 600; }
+        .close { width: 36px; height: 36px; padding: 0; border: none; border-radius: 50%; background: none;
+          display: flex; align-items: center; justify-content: center; color: var(--secondary-text-color); }
+        dialog .sel { background: none; padding: 0; }
+        select.want { border: 2px solid var(--primary-color); }
+        .row { scroll-margin-top: 120px; }
         [hidden] { display: none !important; }
         .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .title { font-size: 20px; font-weight: 600; flex: 1 1 auto; }
@@ -632,23 +753,25 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       </style>
       <ha-card>
         <div class="head" id="head"></div>
-        <div class="cam" id="cam" hidden><video id="video" playsinline muted></video><div class="frame"></div></div>
-        <div class="manual" id="manual" hidden>
-          <input id="code" inputmode="numeric" placeholder="Barcode number" autocomplete="off" enterkeyhint="search">
-          <button class="primary" id="go">Look up</button>
-        </div>
         <div class="status" id="status"></div>
         <div class="sel" id="sel" hidden></div>
         <div id="list"></div>
-      </ha-card>`;
-    root.getElementById("go").addEventListener("click", () => {
-      const v = root.getElementById("code").value;
-      root.getElementById("code").value = "";
-      this._showManual(false);
-      this._onBarcode(v);
-    });
-    root.getElementById("code").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); root.getElementById("go").click(); }
+      </ha-card>
+      <div class="fabs" id="fabs" popover="manual">
+        <button class="fab mini" data-act="type" title="Type a barcode" aria-label="Type a barcode"><ha-icon icon="mdi:keyboard-outline"></ha-icon></button>
+        <button class="fab primary" data-act="scan" title="Scan a barcode" aria-label="Scan a barcode"><ha-icon icon="mdi:barcode-scan"></ha-icon></button>
+      </div>
+      <dialog class="sheet" id="sheet"></dialog>`;
+    const sheet = root.getElementById("sheet");
+    // Esc closes the sheet; a later close event from a sheet already reopened is ignored.
+    sheet.addEventListener("close", () => { if (this._sheet && !sheet.open) this._closeSheet(); });
+    sheet.addEventListener("click", (e) => { if (e.target === sheet) this._closeSheet(); });   // backdrop
+    root.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.id === "code") {
+        e.preventDefault();
+        const go = root.querySelector('[data-act="go"]');
+        if (go) go.click();
+      }
     });
     root.addEventListener("click", (e) => this._onClick(e));
     root.addEventListener("change", (e) => this._onChange(e));
@@ -662,14 +785,21 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const el = e.target.closest("[data-act]");
     if (!el) return;
     const act = el.dataset.act;
-    if (act === "scan") { this._showManual(false); this._cam ? this._stopCamera() : this._startCamera(); }
-    else if (act === "type") { this._stopCamera(); this._showManual(this.shadowRoot.getElementById("manual").hidden); }
+    if (act === "scan") this._openSheet("scan");
+    else if (act === "type") this._openSheet("type");
+    else if (act === "go") {
+      const input = this.shadowRoot.getElementById("code");
+      this._onBarcode(input ? input.value : "");
+    } else if (act === "sheetclose") this._closeSheet();
     else if (act === "line") {
       const line = this._all.find((l) => l.uid === el.dataset.uid);
       if (line) this._selectLine(line);
     } else if (act === "loc") this._place(el.dataset.loc);
     else if (act === "undo" && this._sel && this._sel.line) this._undo(this._sel.line, Number(el.dataset.i));
-    else if (act === "cancel") { this._sel = null; this._status(""); this._renderSel(); this._renderList(); }
+    else if (act === "cancel") {
+      if (this._sheet) { this._closeSheet(); return; }
+      this._sel = null; this._status(""); this._renderSel(); this._renderList();
+    }
     else if (act === "donetoggle") {
       this._doneShut = !this._doneShut;
       try { localStorage.setItem("fridge-assistant-unpack-done-shut", this._doneShut ? "1" : "0"); } catch (e) { /* fine */ }
@@ -691,7 +821,9 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       return;
     }
     if (e.target.id !== "pick" || !this._sel) return;
-    const line = this._lines.find((l) => l.uid === e.target.value) || null;
+    const v = e.target.value;
+    const line = v && v !== "__none__" ? this._lines.find((l) => l.uid === v) || null : null;
+    this._sel.pickChosen = !!v;
     this._sel.line = line;
     this._sel.qty = line ? line.qty : 1;
     this._sel.suggested = line ? await this._lineLocation(line)
@@ -702,7 +834,8 @@ class FridgeAssistantUnpackCard extends HTMLElement {
   }
 
   _status(text, bad = false) {
-    const s = this.shadowRoot && this.shadowRoot.getElementById("status");
+    // While the sheet is up its own status line is the one that's visible.
+    const s = this.shadowRoot && this.shadowRoot.getElementById(this._sheet ? "sst" : "status");
     if (!s) return;
     s.textContent = text || "";
     s.classList.toggle("bad", !!bad);
@@ -723,9 +856,6 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       <div class="title">${esc(this._config.title)}
         <div class="sub">${sub}</div>
       </div>
-      <button class="primary" data-act="scan" title="${this._cam ? "Stop scanning" : "Scan a barcode"}"
-        aria-label="${this._cam ? "Stop scanning" : "Scan a barcode"}"><ha-icon icon="${this._cam ? "mdi:close" : "mdi:barcode-scan"}"></ha-icon></button>
-      <button data-act="type" title="Type a barcode"><ha-icon icon="mdi:keyboard-outline"></ha-icon></button>
       ${this._countdownHtml()}`;
   }
 
@@ -767,7 +897,11 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     if (!line) subParts.push(this._lines.length ? "Not matched to a line" : "Not on the list");
     if (line && line.info.ordered) subParts.push(`Substitute for ${line.info.ordered}`);
     if (line && !open) subParts.push("All put away");
-    const options = [`<option value="">— not on the list —</option>`]
+    // An unmatched scan starts with nothing picked, so a place can't be pressed
+    // until its line (or "not on the list") is chosen.
+    const unpicked = !line && !sel.pickChosen;
+    const options = (unpicked ? [`<option value="" disabled selected>Choose its line…</option>`] : [])
+      .concat([`<option value="__none__"${!line && !unpicked ? " selected" : ""}>— not on the list —</option>`])
       .concat(this._lines.map((l) => `<option value="${esc(l.uid)}"${line && l.uid === line.uid ? " selected" : ""}>${esc(l.summary)}</option>`))
       .join("");
     const max = line ? line.qty : 99;
@@ -785,7 +919,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
           <span>${esc(pl.qty > 1 ? `${pl.qty} × ` : "")}${esc(pl.name || line.name)} → ${esc(LOCATION_LABEL[pl.location] || pl.location || "?")}</span>
           <button data-act="undo" data-i="${i}" ${this._busy ? "disabled" : ""}>Undo</button></div>`).join("")}
       </div>` : ""}
-      ${open && sel.barcode && this._lines.length ? `<select id="pick" aria-label="Order line">${options}</select>` : ""}
+      ${open && sel.barcode && this._lines.length ? `<select id="pick"${unpicked ? ' class="want"' : ""} aria-label="Order line">${options}</select>` : ""}
       ${open && (max > 1 || sel.qty > 1) ? `
         <div class="qty">
           <button data-act="minus" ${sel.qty <= 1 ? "disabled" : ""}>−</button>
@@ -816,6 +950,13 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const node = root && root.getElementById("sel");
     const list = root && root.getElementById("list");
     if (!node || !list) return;
+    // An unmatched scan is handled in the bottom sheet.
+    const slot = this._sheet && this._sheet.mode === "sel" ? root.getElementById("sslot") : null;
+    if (slot) {
+      if (node.parentNode !== slot) slot.appendChild(node);
+      node.classList.remove("inline");
+      return;
+    }
     const uid = this._sel && this._sel.line && this._sel.line.uid;
     const row = uid ? list.querySelector(`[data-act="line"][data-uid="${CSS.escape(uid)}"]`) : null;
     if (row) {

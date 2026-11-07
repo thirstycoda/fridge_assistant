@@ -1,0 +1,44 @@
+"""Picking a scanned product's name from OpenFoodFacts data."""
+
+import unittest
+
+from tests.hastubs import load_module
+
+products = load_module("products")
+
+
+class TestPickName(unittest.TestCase):
+    def test_english_name_beats_foreign_main_name(self):
+        p = {"product_name": "Fermentiertes Sojaprodukt, Ungesüßt", "lang": "de",
+             "product_name_en": "Plain No Sugars Soya Yoghurt Alternative"}
+        self.assertEqual(products.pick_name(p, "en"), "Plain No Sugars Soya Yoghurt Alternative")
+
+    def test_main_name_used_when_it_is_english(self):
+        p = {"product_name": "Shelled Hemp Seeds", "lang": "en", "generic_name_en": "Hemp seeds"}
+        self.assertEqual(products.pick_name(p, "en"), "Shelled Hemp Seeds")
+
+    def test_english_generic_name_beats_foreign_main_name(self):
+        p = {"product_name": "Semillas de cáñamo", "lang": "es", "generic_name_en": "Shelled hemp seeds"}
+        self.assertEqual(products.pick_name(p, "en"), "Shelled hemp seeds")
+
+    def test_dutch_only_after_every_english_option(self):
+        p = {"product_name_nl": "Sojadrink", "generic_name_en": "Soya drink", "brands": "Alpro, Danone"}
+        self.assertEqual(products.pick_name(p, "en"), "Soya drink")
+
+    def test_brand_when_there_is_no_name(self):
+        self.assertEqual(products.pick_name({"brands": "Alpro, Danone"}, "en"), "Alpro")
+
+    def test_foreign_main_name_is_the_last_resort(self):
+        p = {"product_name": "Semillas de cáñamo", "lang": "es", "brands": "Linwoods"}
+        self.assertEqual(products.pick_name(p, "en"), "Semillas de cáñamo")
+
+    def test_dutch_first_in_dutch(self):
+        p = {"product_name": "Soya drink", "lang": "en", "product_name_nl": "Sojadrink"}
+        self.assertEqual(products.pick_name(p, "nl"), "Sojadrink")
+
+    def test_nothing_at_all(self):
+        self.assertEqual(products.pick_name({}, "en"), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

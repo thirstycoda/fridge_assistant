@@ -20,7 +20,7 @@ _LOGGER = logging.getLogger(__name__)
 
 OFF_URL = "https://world.openfoodfacts.org/api/v2/product/{code}.json"
 _FIELDS = (
-    "product_name,product_name_nl,brands,quantity,"
+    "product_name,product_name_en,product_name_nl,generic_name_en,lang,brands,quantity,"
     "categories_tags,image_front_small_url"
 )
 
@@ -45,6 +45,28 @@ def _category_from_tags(tags: list[str] | None) -> str:
         if any(k in text for k in keys):
             return category
     return DEFAULT_CATEGORY
+
+
+def pick_name(product: dict[str, Any], lang: str) -> str:
+    """The product's name in Home Assistant's language where there is one.
+
+    OpenFoodFacts' plain ``product_name`` is in whatever language the product
+    was first entered in (German for many Alpro packs, Spanish for some
+    Linwoods ones), so the language's own field comes first. The plain name
+    counts as that language when the product's main language is it, and is
+    only used otherwise when nothing better exists.
+    """
+    def get(key: str) -> str:
+        return str(product.get(key) or "").strip()
+
+    main = get("product_name")
+    own_main = main if get("lang").lower() == lang else ""
+    if lang == "nl":
+        order = [get("product_name_nl"), own_main, get("product_name_en"), get("generic_name_en")]
+    else:
+        order = [get("product_name_en"), own_main, get("generic_name_en")]
+    order += [main, get("product_name_nl"), get("brands").split(",")[0].strip()]
+    return next((n for n in order if n), "")
 
 
 def normalize_barcode(value: Any) -> str:
@@ -76,14 +98,7 @@ async def async_lookup_barcode(
     if data.get("status") != 1 or not isinstance(data.get("product"), dict):
         return None
     product = data["product"]
-    generic_name = product.get("product_name")
-    dutch_name = product.get("product_name_nl")
-    first, second = (
-        (dutch_name, generic_name)
-        if resolve_language(hass) == "nl"
-        else (generic_name, dutch_name)
-    )
-    name = (first or second or product.get("brands") or "").strip()
+    name = pick_name(product, resolve_language(hass))
     if not name:
         return None
     return {

@@ -66,6 +66,15 @@ def install_stubs() -> None:
     aiohttp_client = _register("homeassistant.helpers.aiohttp_client")
     aiohttp_client.async_get_clientsession = lambda hass: None
 
+    # products.py imports aiohttp for its (untested) network call; the test
+    # environment only installs pytest.
+    if "aiohttp" not in sys.modules:
+        try:
+            import aiohttp  # noqa: F401
+        except ImportError:
+            aiohttp = _register("aiohttp")
+            aiohttp.ClientTimeout = lambda **kw: SimpleNamespace(**kw)
+
     util = _register("homeassistant.util")
     dt = _register("homeassistant.util.dt")
     dt.now = lambda: datetime.now(timezone.utc)

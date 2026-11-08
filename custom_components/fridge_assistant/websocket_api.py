@@ -16,6 +16,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
 
 from .ai import AIEstimateError, async_estimate
+from .amounts import format_amount
 from .const import (
     ACTION_EATEN,
     CATEGORIES,
@@ -508,10 +509,14 @@ async def ws_lookup_barcode(hass, connection, msg) -> None:
     code = normalize_barcode(msg["barcode"])
 
     def _prefill(src: dict[str, Any]) -> dict[str, Any]:
+        # The pack's size the last time it came in ("500 g"); old history
+        # snapshots still carry the typed quantity instead.
+        size = (format_amount(src.get("amount_initial"), src.get("amount_unit"))
+                if src.get("amount_initial") is not None else str(src.get("quantity") or ""))
         return {
             "name": src.get("name"),
             "category": src.get("category"),
-            "quantity": src.get("quantity"),
+            "size": size,
             "emoji": src.get("emoji"),
             "kind": src.get("kind"),
             "photo": src.get("photo"),

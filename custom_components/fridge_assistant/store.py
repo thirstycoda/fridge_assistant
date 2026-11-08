@@ -21,6 +21,7 @@ from .amounts import (
     guess_density,
     initial_amount,
     normalize_unit,
+    parse_quantity,
 )
 from .codes import generate_code
 from .const import (
@@ -224,6 +225,24 @@ class FridgeDataStore(Store):
                 if isinstance(snap, dict):
                     _migrate_category_v4(snap)
         return old_data
+
+
+def loose_amount(amount: Any, quantity: str | None, kind: str | None) -> tuple[float, str] | None:
+    """An item's starting total when its food has no unit to count in: an
+    explicit number or a typed count/measure as given (a bare count is
+    pieces), else one piece for an ingredient. A dish with nothing given is
+    counted by its portions instead (None)."""
+    if amount not in (None, ""):
+        try:
+            return round(float(amount), 2), "each"
+        except (TypeError, ValueError):
+            pass
+    parsed = parse_quantity(quantity) if quantity else None
+    if parsed:
+        return round(parsed[0], 2), parsed[1]
+    if kind == KIND_DISH:
+        return None
+    return 1.0, "each"
 
 
 class FridgeStore:
@@ -600,7 +619,6 @@ class FridgeStore:
             "icon": data.get("icon"),
             "photo": data.get("photo"),
             "template_id": (template or {}).get("id") if template else data.get("template_id"),
-            "quantity": data.get("quantity"),
             # Every item has portions; a normal single item is one open portion.
             # Only multi-portion items get sub-codes (AB12-1 …) on stickers.
             "portions": default_portions(data.get("portions")),
@@ -658,6 +676,14 @@ class FridgeStore:
                 item["amount_checked_at"] = now.isoformat()
             except (TypeError, ValueError):
                 pass
+        if item.get("amount") is None and not (template and template.get("amount_unit")):
+            # Every item keeps one running total. Without a unit to count in,
+            # an ingredient counts in pieces (one, unless a count was given);
+            # a dish without one is counted by its portions.
+            start = loose_amount(data.get("amount"), data.get("quantity"), item["kind"])
+            if start is not None:
+                item["amount"] = item["amount_initial"] = start[0]
+                item["amount_unit"] = start[1]
         return item
 
     def start_tracking(self, data: dict[str, Any]) -> dict[str, Any] | None:
@@ -665,6 +691,10 @@ class FridgeStore:
         when its food is known but isn't counted yet, start counting it in
         that unit (``each`` stays ``each``; ``kg``/``l`` become ``g``/``ml``),
         with this pack's size as the usual one. Returns the template changed."""
+        if (data.get("amount") is None or not data.get("amount_unit")) and data.get("quantity"):
+            parsed = parse_quantity(data["quantity"])
+            if parsed and parsed[1] != "each":
+                data = {**data, "amount": parsed[0], "amount_unit": parsed[1]}
         if data.get("amount") is None or not data.get("amount_unit"):
             return None
         template = self.get_template(data.get("template_id"))
@@ -680,13 +710,8 @@ class FridgeStore:
             amount = float(data["amount"]) * factor
         except (TypeError, ValueError):
             return None
-        packs = 1
-        try:
-            packs = max(1, int(str(data.get("quantity") or "1").strip()))
-        except ValueError:
-            packs = 1
         return self.upsert_user_template({
-            **template, "id": template["id"], "amount_unit": base, "pack_amount": round(amount / packs, 2),
+            **template, "id": template["id"], "amount_unit": base, "pack_amount": round(amount, 2),
         })
 
     def add_item(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -697,6 +722,29 @@ class FridgeStore:
         item = self.items.get(item_id)
         if not item:
             return None
+        changes = dict(changes)
+        legacy_qty = changes.pop("quantity", None)
+        if legacy_qty and "amount" not in changes:
+            template = self.get_template(changes.get("template_id", item.get("template_id")))
+            start = (initial_amount(template, str(legacy_qty)) if template and template.get("amount_unit")
+                     else loose_amount(None, str(legacy_qty), item.get("kind")))
+            if isinstance(start, tuple):
+                changes["amount"], changes["amount_unit"] = start
+            elif start is not None:
+                changes["amount"] = start
+        # An amount typed in another unit than its food counts in converts
+        # ("0.5 kg" of a food kept in grams), so the total stays in one unit.
+        if changes.get("amount") not in (None, "") and changes.get("amount_unit"):
+            template = self.get_template(changes.get("template_id", item.get("template_id")))
+            target = normalize_unit((template or {}).get("amount_unit"))
+            unit = normalize_unit(changes["amount_unit"])
+            if target and unit != target:
+                try:
+                    conv = convert(float(changes["amount"]), unit, template)
+                except (TypeError, ValueError):
+                    conv = None
+                if conv is not None:
+                    changes["amount"], changes["amount_unit"] = conv, target
         allowed = {
             "name",
             "contents",
@@ -707,7 +755,6 @@ class FridgeStore:
             "icon",
             "photo",
             "template_id",
-            "quantity",
             "added_date",
             "expiry_date",
             "expiry_source",
@@ -742,6 +789,7 @@ class FridgeStore:
                     item["amount_initial"] = value
                 item["amount_checked_at"] = dt_util.now().isoformat()
             item[key] = value
+        item.pop("quantity", None)
         # Linking an item to a template that knows its pack size starts tracking it.
         if "template_id" in changes and item.get("amount") is None:
             template = self.get_template(item.get("template_id"))
@@ -973,7 +1021,7 @@ class FridgeStore:
         """The item's amount, starting untracked items as full packs."""
         if item.get("amount") is not None:
             return float(item["amount"])
-        start = initial_amount(template, item.get("quantity"))
+        start = initial_amount(template, None)
         if start is None:
             return None
         item["amount"] = item["amount_initial"] = round(start, 2)
@@ -988,14 +1036,61 @@ class FridgeStore:
         """
         changed = 0
         for item in self.items.values():
-            if item.get("amount") is not None:
-                continue
             if template_id and item.get("template_id") != template_id:
                 continue
-            template = self.get_template(item.get("template_id"))
-            if template and template.get("amount_unit") and self._ensure_amount(item, template) is not None:
+            before = (item.get("amount"), item.get("amount_unit"), "quantity" in item)
+            if item.get("amount") is None:
+                self._settle_amount(item)
+            else:
+                self._recount_in_food_unit(item)
+            # The typed quantity only ever set the starting amount.
+            item.pop("quantity", None)
+            if (item.get("amount"), item.get("amount_unit"), False) != before:
                 changed += 1
         return changed
+
+    def _recount_in_food_unit(self, item: dict[str, Any]) -> None:
+        """An item counted in another unit than its food (it started in
+        pieces before the food had a unit): convert it, or failing that keep
+        the share that's left of a usual pack."""
+        template = self.get_template(item.get("template_id"))
+        target = normalize_unit((template or {}).get("amount_unit"))
+        unit = normalize_unit(item.get("amount_unit"))
+        if not target or not unit or unit == target:
+            return
+        amount = float(item.get("amount") or 0)
+        new = convert(amount, unit, template)
+        new_initial = convert(float(item.get("amount_initial") or amount), unit, template)
+        if new is None:
+            pack = initial_amount(template, None)
+            if pack is None:
+                return
+            initial = float(item.get("amount_initial") or 0)
+            new = pack * (amount / initial if initial else 1.0)
+            new_initial = pack
+        item["amount"] = round(new, 2)
+        item["amount_initial"] = round(max(new_initial or new, new), 2)
+        item["amount_unit"] = target
+
+    def _settle_amount(self, item: dict[str, Any]) -> bool:
+        """Give an item without a total one, from its old typed quantity:
+        in its food's unit when the food has one, otherwise as given (or in
+        pieces for an ingredient). Returns whether it now has an amount."""
+        template = self.get_template(item.get("template_id"))
+        qty = item.get("quantity")
+        if template and template.get("amount_unit"):
+            start = initial_amount(template, str(qty) if qty else None)
+            if start is None:
+                return False
+            item["amount"] = item["amount_initial"] = round(float(start), 2)
+            item["amount_unit"] = normalize_unit(template["amount_unit"])
+            return True
+        loose = loose_amount(None, str(qty) if qty else None, item.get("kind"))
+        if loose is None:
+            return False
+        item["amount"] = item["amount_initial"] = loose[0]
+        item["amount_unit"] = loose[1]
+        return True
 
     def consume_ingredients(
         self,
@@ -1072,7 +1167,7 @@ class FridgeStore:
                 take = min(have, remaining)
                 left[item["id"]] = have - take
                 remaining -= take
-                start = item.get("amount_initial") or initial_amount(template, item.get("quantity")) or have
+                start = item.get("amount_initial") or initial_amount(template, None) or have
                 used_up = left[item["id"]] <= max(EMPTY_SHARE * float(start), 1e-6)
                 res["taken"].append({
                     "id": item["id"], "code": item.get("code"), "name": item.get("name"),
@@ -1412,6 +1507,9 @@ class FridgeStore:
             if not snap.get("id"):
                 return None
             item = dict(snap)
+            if item.get("amount") is None:
+                self._settle_amount(item)
+            item.pop("quantity", None)
             # An auto-completion consumed its final portion in the snapshot;
             # undoing it puts the item back with that portion open again.
             self._reopen_portion(item, ev.get("portion"))

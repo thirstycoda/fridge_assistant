@@ -100,8 +100,13 @@
           "name": "Houdbaar tot",
           "description": "ISO-datum (YYYY-MM-DD). Leeg = automatisch schatten."
         },
-        "quantity": {
-          "name": "Hoeveelheid"
+        "amount": {
+          "name": "Hoeveelheid",
+          "description": "Hoeveel er is (het lopende totaal). Leeg = de gebruikelijke verpakking."
+        },
+        "amount_unit": {
+          "name": "Eenheid",
+          "description": "g, kg, ml, l of each. Leeg = de eigen eenheid van het product."
         },
         "portions": {
           "name": "Porties",

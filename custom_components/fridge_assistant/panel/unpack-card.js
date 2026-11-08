@@ -320,7 +320,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
         known: !!known,
         photo: (known && known.photo) || (product && product.photo) || "",
         brand: (product && product.brand) || "",
-        size: (product && product.quantity) || "",
+        size: (product && product.size) || (known && known.size) || "",
       } : null,
       qty: line ? line.qty : 1,
       suggested: null,
@@ -418,6 +418,8 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const item = {
       contents,
       location,
+      // How many of the delivery line go here: only used to guess the total
+      // from the usual pack when nothing more exact is known; not stored.
       quantity: String(qty),
       notes: notes.filter(Boolean).join(" — ") || null,
     };

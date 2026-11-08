@@ -2,6 +2,25 @@
 
 import { addDays, daysBetween, daysLabel, debounce, esc, todayISO } from "../lib/format.js";
 
+/* A pack size from product data: "4 x 400g" -> 1600 g, "1L" -> 1 l, "11" -> 11. */
+const SIZE_UNITS = { kg: "kg", g: "g", gram: "g", grams: "g", ml: "ml", cl: "ml", l: "l", litre: "l", litres: "l", liter: "l", liters: "l", ltr: "l" };
+function parseSize(text) {
+  const t = String(text || "").toLowerCase().replace(/(\d),(\d)/g, "$1.$2").trim();
+  let m = /(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(kg|g|ml|cl|l|litres?|liters?|ltr)\b/.exec(t);
+  if (m) return { amount: Number(m[1]) * Number(m[2]) * (m[3] === "cl" ? 10 : 1), unit: SIZE_UNITS[m[3]] };
+  m = /(\d+(?:\.\d+)?)\s*(kg|g|grams?|ml|cl|l|litres?|liters?|ltr)\b/.exec(t);
+  if (m) return { amount: Number(m[1]) * (m[2] === "cl" ? 10 : 1), unit: SIZE_UNITS[m[2]] };
+  m = /^(\d+(?:\.\d+)?)$/.exec(t);
+  if (m) return { amount: Number(m[1]), unit: "each" };
+  return null;
+}
+
+/* The units an amount can be typed in: the item's/food's own one first. */
+function unitChoices(own) {
+  const base = ["g", "kg", "ml", "l", "each"];
+  return own && !base.includes(own) ? [own, ...base] : base;
+}
+
 export function openAddModal(panel, prefill = {}, editItem = null) {
   const isEdit = !!editItem;
   const m = {
@@ -16,7 +35,14 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
     kindManual: isEdit,
     portions: 1,
     aiResult: null,
+    // The running total: an edited item's own, or a scanned pack's size.
+    // Left empty, a new item starts with its food's usual pack.
+    amountManual: false,
   };
+  const scanned = !editItem ? parseSize(prefill.size || prefill.quantity) : null;
+  const startAmount = editItem
+    ? { amount: editItem.amount ?? "", unit: editItem.amount_unit || "each" }
+    : scanned || { amount: "", unit: "g" };
   const locs = panel._state.locations;
   const kinds = panel._state.kinds || { ingredient: {}, dish: {} };
   const nameVal = editItem ? editItem.name : (prefill.name || "");
@@ -46,6 +72,12 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
         <small class="ps-note">${panel.t("portionsFieldNote")}</small>
       </div>
     </label>` : ""}
+    <label class="field"><span>${panel.t(isEdit ? "amountLeftLabel" : "amountLabel")}</span>
+      <div class="amt-row">
+        <input id="f-amt" type="number" min="0" step="any" inputmode="decimal" placeholder="${isEdit ? "" : panel.t("amountPlaceholder")}" value="${esc(startAmount.amount)}">
+        <select id="f-unit">${unitChoices(startAmount.unit).map((u) => `<option value="${u}"${u === startAmount.unit ? " selected" : ""}>${esc(panel.t("unitName", u))}</option>`).join("")}</select>
+      </div>
+    </label>
     <div class="grid2">
       <label class="field"><span>${panel.t("dateInFieldLabel")}</span><div class="datefield"><input type="date" id="f-added" value="${m.added}"><span class="df-display"></span></div></label>
       <label class="field"><span>${panel.t("expiryLabel")}</span><div class="datefield"><input type="date" id="f-expiry" value="${m.expiry}"><span class="df-display"></span><button type="button" class="df-clear" title="${panel.t("clearDateTitle")}" aria-label="${panel.t("clearDateTitle")}"><ha-icon icon="mdi:close"></ha-icon></button></div></label>
@@ -54,11 +86,7 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
     <button class="link" id="f-adv">${panel.t("moreOptions")}</button>
     <div class="adv hidden" id="f-advbox">
       <label class="field"><span>${panel.t("displayNameLabel")}</span><input id="f-dispname" placeholder="${panel.t("displayNamePlaceholder")}" value="${esc(editItem?.name || "")}"></label>
-      <div class="grid2">
-        <label class="field"><span>${panel.t("quantityLabel")}</span><input id="f-qty" placeholder="${panel.t("quantityPlaceholder")}" value="${esc(editItem?.quantity ?? prefill.quantity ?? "")}"></label>
-        <label class="field"><span>${panel.t("emojiLabel")}</span><input id="f-emojiin" maxlength="4" value="${esc(m.emoji)}"></label>
-      </div>
-      ${editItem && editItem.amount_unit ? `<label class="field"><span>${panel.t("amountLeftField", editItem.amount_unit)}</span><input id="f-amount" type="number" min="0" step="any" inputmode="decimal" value="${esc(editItem.amount ?? "")}"></label>` : ""}
+      <label class="field"><span>${panel.t("emojiLabel")}</span><input id="f-emojiin" maxlength="4" value="${esc(m.emoji)}"></label>
       <label class="field"><span>${panel.t("notesLabel")}</span><input id="f-notes" placeholder="${panel.t("notesLabel")}" value="${esc(editItem?.notes ?? prefill.notes ?? "")}"></label>
       <label class="field"><span>${panel.t("photoUrlLabel")}</span><input id="f-photo" placeholder="${panel.t("photoUrlPlaceholder")}" value="${esc(editItem?.photo ?? prefill.photo ?? "")}"></label>
     </div>
@@ -135,6 +163,7 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
     if (res.template) {
       const t = res.template;
       m.template_id = t.id; m.category = t.category; setEmoji(t.emoji || "🍽️");
+      if (!isEdit && !m.amountManual && !scanned) setAmountGuess(t);
       if (!m.kindManual) setKind(panel._kindOf(t));
       const sl = t.shelf_life || {};
       const slDays = sl[panel._slKey(m.location)];
@@ -172,6 +201,20 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
     }
   };
   const doMatch = debounce(matchNow, 350);
+
+  // The food's usual pack fills the amount box until someone types in it.
+  const amtEl = q("#f-amt"), unitEl = q("#f-unit");
+  function setAmountGuess(t) {
+    if (!t.amount_unit) return;
+    const unit = t.amount_unit;
+    if (![...unitEl.options].some((o) => o.value === unit)) {
+      unitEl.insertAdjacentHTML("afterbegin", `<option value="${esc(unit)}">${esc(panel.t("unitName", unit))}</option>`);
+    }
+    unitEl.value = unit;
+    amtEl.value = t.pack_amount != null ? String(t.pack_amount) : "";
+  }
+  amtEl.addEventListener("input", () => { m.amountManual = true; });
+  unitEl.addEventListener("change", () => { m.amountManual = true; });
 
   nameEl.addEventListener("input", doMatch);
   // Enter = add straight away, but let a fresh match land first so the
@@ -229,14 +272,16 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
       category: m.category,
       kind: m.kind,
       template_id: m.template_id,
-      quantity: (q("#f-qty")?.value || "").trim() || null,
       notes: (q("#f-notes")?.value || "").trim() || null,
       photo: (q("#f-photo")?.value || "").trim() || null,
       barcode: (editItem?.barcode ?? prefill.barcode) || null,
     };
     if (!isEdit) payload.portions = m.portions;
-    const amountEl = q("#f-amount");
-    if (isEdit && amountEl && amountEl.value !== "") payload.amount = Number(amountEl.value);
+    // One running total. Empty on a new item = the food's usual pack.
+    if (amtEl.value !== "") {
+      const changed = !isEdit || Number(amtEl.value) !== Number(editItem.amount) || unitEl.value !== editItem.amount_unit;
+      if (changed) { payload.amount = Number(amtEl.value); payload.amount_unit = unitEl.value; }
+    }
     if (!payload.contents) { nameEl.focus(); return; }
     q("#f-submit").disabled = true;
     try {
@@ -282,7 +327,7 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
   });
 
   // A scanned product prefills advanced fields — open the box so they show.
-  if (!isEdit && (prefill.quantity || prefill.notes || prefill.photo)) {
+  if (!isEdit && (prefill.notes || prefill.photo)) {
     q("#f-advbox").classList.remove("hidden");
     q("#f-adv").textContent = panel.t("lessOptions");
   }

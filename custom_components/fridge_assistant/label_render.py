@@ -54,7 +54,7 @@ STRINGS = {
         "added": "INGELEGD",
         "eat_before": "EET VOOR",
         "contents": "WAT ZIT ERIN",
-        "servings": "HOEVEELHEID",
+        "amount": "HOEVEELHEID",
         "days_left": "nog {n} dagen",
         "one_day": "nog 1 dag",
         "today": "vandaag opeten!",
@@ -69,7 +69,7 @@ STRINGS = {
         "added": "STORED",
         "eat_before": "EAT BEFORE",
         "contents": "WHAT'S INSIDE",
-        "servings": "SERVINGS",
+        "amount": "AMOUNT",
         "days_left": "{n} days left",
         "one_day": "1 day left",
         "today": "eat today!",
@@ -246,6 +246,20 @@ def _fmt_date(d, lang):
 
 
 # --- main entry ------------------------------------------------------------
+def _amount_text(item: dict[str, Any]) -> str:
+    """How much the labelled item holds: its amount ("500 g", "11"), not
+    shown for a plain single piece. Ad-hoc payloads may still pass text."""
+    amount = item.get("amount_initial", item.get("amount"))
+    if amount is None:
+        return str(item.get("quantity") or "").strip()
+    from .amounts import format_amount  # pure, no Home Assistant imports
+
+    unit = item.get("amount_unit")
+    if (unit in (None, "", "each")) and float(amount) == 1:
+        return ""
+    return format_amount(float(amount), unit)
+
+
 def render_label(item: dict[str, Any], ctx: dict[str, Any] | None = None) -> Image.Image:
     """Render ``item`` into a grayscale label image sized for the canvas."""
     ctx = ctx or {}
@@ -435,8 +449,8 @@ def render_label(item: dict[str, Any], ctx: dict[str, Any] | None = None) -> Ima
 
     # 6) Contents (only as much as fits above the footer) --------------------
     contents = str(item.get("contents") or "").strip()
-    quantity = str(item.get("quantity") or "").strip()
-    # Reserve a taller footer band when there's a quantity to show.
+    quantity = _amount_text(item)
+    # Reserve a taller footer band when there's an amount to show.
     footer_top = H - (S(132) if quantity else S(70))
     if contents:
         cfont = sans(S(38))
@@ -453,13 +467,13 @@ def render_label(item: dict[str, Any], ctx: dict[str, Any] | None = None) -> Ima
                 d.text((MX, y), line, font=cfont, fill=BLACK)
                 y += line_h
 
-    # 7) Footer — the quantity ("how much / how many servings") lives here.
+    # 7) Footer — how much is in it ("500 g", "11") lives here.
     # It replaces the old label-type stamp because it's what you actually want
     # to read at a glance. Falls back to the brand line when there's no amount.
     if quantity:
         line_y = H - S(126)
         d.line([0, line_y, W - 1, line_y], fill=BLACK, width=max(1, S(2)))
-        _draw_tracked(d, (MX, line_y + S(16)), s["servings"], sans_bold(S(26)),
+        _draw_tracked(d, (MX, line_y + S(16)), s["amount"], sans_bold(S(26)),
                       tracking=S(6))
         qfont, _ = _fit_font(d, quantity, sans_bold, inner_w, start=S(54),
                              min_size=S(32))
@@ -511,7 +525,7 @@ if __name__ == "__main__":
         "location": "freezer",
         "added_date": "2026-07-20",
         "expiry_date": "2026-09-20",
-        "quantity": "2 bakjes",
+        "amount": 2, "amount_unit": "each",
     }
     ctx = {"lang": "nl", "location_label": "Vriezer", "kind_label": "Gerecht",
            "today": "2026-07-20"}

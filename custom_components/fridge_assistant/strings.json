@@ -99,8 +99,13 @@
           "name": "Best before",
           "description": "ISO date (YYYY-MM-DD). Empty = estimate automatically."
         },
-        "quantity": {
-          "name": "Quantity"
+        "amount": {
+          "name": "Amount",
+          "description": "How much there is (the running total). Empty = the food's usual pack size."
+        },
+        "amount_unit": {
+          "name": "Unit",
+          "description": "g, kg, ml, l or each. Empty = the food's own unit."
         },
         "portions": {
           "name": "Portions",

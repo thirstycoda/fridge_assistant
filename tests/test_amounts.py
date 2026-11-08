@@ -191,28 +191,36 @@ class TestConsume(unittest.TestCase):
         self.assertEqual(self.store.items[item["id"]]["amount"], 400)
 
     def test_backfill_older_items(self):
-        item = self.add("Plain flour", quantity="2")
+        # Stored before amounts: only the typed quantity said how much.
+        item = self.add("Plain flour")
         for key in ("amount", "amount_initial", "amount_unit"):
             item.pop(key)
+        item["quantity"] = "2"
         loose = self.add("Dragon fruit")                    # no template
-        self.assertEqual(self.store.backfill_amounts(), 1)
-        self.assertEqual(item["amount"], 3000)
-        self.assertEqual(item["amount_unit"], "g")
-        self.assertNotIn("amount", loose)
+        loose.pop("amount"); loose.pop("amount_initial"); loose["amount_unit"] = None
+        loose["quantity"] = "3"
+        self.assertEqual(self.store.backfill_amounts(), 2)
+        self.assertEqual((item["amount"], item["amount_unit"]), (3000, "g"))
+        self.assertEqual((loose["amount"], loose["amount_unit"]), (3, "each"))
+        self.assertNotIn("quantity", item)
+        self.assertNotIn("quantity", loose)
         self.assertEqual(self.store.backfill_amounts(), 0)  # already done
 
     def test_setting_pack_size_backfills(self):
         plain = self.store.upsert_user_template({"name": "Rice vinegar", "category": "other"})
         item = self.add("Rice vinegar")
-        self.assertNotIn("amount", item)
+        self.assertEqual((item["amount"], item["amount_unit"]), (1, "each"))   # one bottle, in pieces
         self.store.upsert_user_template({"id": plain["id"], "name": "Rice vinegar", "amount_unit": "ml", "pack_amount": 150})
-        self.assertEqual(item["amount"], 150)
+        self.assertEqual((item["amount"], item["amount_unit"]), (150, "ml"))   # recounted in the food's unit
+        half = self.add("Rice vinegar", amount=75)
+        self.assertEqual(half["amount"], 75)
 
     def test_linking_a_template_starts_tracking(self):
         item = self.add("Chia seeds", quantity="300 g")
-        self.assertNotIn("amount", item)
+        self.assertEqual((item["amount"], item["amount_unit"]), (300, "g"))   # scanned size kept
+        self.assertNotIn("quantity", item)
         self.store.update_item(item["id"], {"template_id": self.flour["id"]})
-        self.assertEqual(item["amount"], 300)                  # scanned size kept
+        self.assertEqual(item["amount"], 300)
 
     def test_template_keeps_amount_fields(self):
         tpl = self.store.upsert_user_template({"id": self.flour["id"], "name": "Plain flour", "notes": "x"})
@@ -388,3 +396,47 @@ class TestStockCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOneTotal(unittest.TestCase):
+    """Every item keeps one running total; a typed quantity never sticks."""
+
+    def setUp(self):
+        self.store = make_store()
+        self.flour = self.store.upsert_user_template({"name": "Plain flour", **FLOUR})
+
+    def add(self, name, **extra):
+        return self.store.add_item(self.store.build_item({"name": name, "location": "cupboard", **extra}))
+
+    def test_quantity_is_not_stored(self):
+        item = self.add("Plain flour", quantity="500 g")
+        self.assertNotIn("quantity", item)
+        self.assertEqual((item["amount"], item["amount_unit"]), (500, "g"))
+
+    def test_ingredient_without_a_unit_counts_in_pieces(self):
+        self.assertEqual((self.add("Star fruit")["amount"], self.add("Star fruit")["amount_unit"]), (1, "each"))
+        self.assertEqual(self.add("Star fruit", quantity="11")["amount"], 11)
+
+    def test_dish_without_a_unit_is_counted_by_portions(self):
+        self.store.upsert_user_template({"name": "Curry", "kind": "dish", "category": "dinner"})
+        item = self.add("Curry", portions=4)
+        self.assertNotIn("amount", item)
+        rolls = self.add("Curry", quantity="11")
+        self.assertEqual((rolls["amount"], rolls["amount_unit"]), (11, "each"))
+
+    def test_an_old_callers_quantity_becomes_the_amount(self):
+        item = self.add("Plain flour")
+        self.store.update_item(item["id"], {"quantity": "750 g"})
+        self.assertEqual(item["amount"], 750)
+        self.assertNotIn("quantity", item)
+
+    def test_pieces_recount_by_weight_when_the_food_gets_one(self):
+        tofu = self.store.upsert_user_template({"name": "Tofu", "category": "other", "amount_unit": "each"})
+        item = self.add("Tofu", amount=15)
+        self.store.upsert_user_template({"id": tofu["id"], "name": "Tofu", "amount_unit": "g", "per": {"each": 40}})
+        self.assertEqual((item["amount"], item["amount_unit"]), (600, "g"))
+
+    def test_edit_in_another_unit_converts(self):
+        item = self.add("Plain flour")
+        self.store.update_item(item["id"], {"amount": 0.5, "amount_unit": "kg"})
+        self.assertEqual((item["amount"], item["amount_unit"]), (500, "g"))

@@ -64,7 +64,7 @@ full undo. It works completely offline; AI estimates and the printer add-on are 
   clickable); on mobile everything remains a bottom sheet. History and the templates manager use the
   same drawer.
 - 📷 **Barcode scanning** — scan your own sticker to instantly find an item, or scan a retail barcode
-  to add a new grocery product with its name/photo/quantity pre-filled.
+  to add a new grocery product with its name/photo/size pre-filled.
 - 👤 **Who added what** — items remember who put them in, shown with their Home Assistant person avatar.
 - ✅ **Finish items** as *eaten* or *tossed*, logged in a paginated history with who/when — with undo.
 - 🔔 **Expiry notifications** — a persistent notification + event fires daily (time configurable) for
@@ -125,7 +125,7 @@ ambiguous letters (I/O/Q) excluded so it always reads cleanly off a small sticke
 
 If the optional [Label Printer add-on](#optional-label-printer-add-on) is installed, a tap on 🏷️ prints
 a sticker sized for a **DYMO 99014** label (54 × 101 mm) with the item name, a scannable Code 39 barcode
-of the item code, the storage date, a bold "eat before" date, contents, and quantity/servings.
+of the item code, the storage date, a bold "eat before" date, contents, and how much is in it ("500 g", "11").
 
 ### Portions
 
@@ -179,7 +179,7 @@ Tap the 📷 button next to add (➕) to open the scanner. It has two modes:
 Scanning a barcode that *isn't* one of your own labels is treated as a **retail barcode** (EAN/UPC):
 Fridge Assistant looks it up first against products you've scanned before (works offline, for repeat
 purchases), then against [Open Food Facts](https://world.openfoodfacts.org/) (free, no API key) to
-pre-fill the name, category, quantity and photo of a new item — you just confirm the location and date.
+pre-fill the name, category, size and photo of a new item — you just confirm the location and date.
 
 Three detection tiers keep it working across devices:
 
@@ -433,9 +433,17 @@ convert (`{"tbsp": 18, "can": 400}`), and optionally `density` (g per ml) so
 spoons of something kept in grams convert; seasonings (category
 `sauces_spices`) without one use a ground spice's (a teaspoon ≈ 2.5 g, salt
 6 g). New items then start with their pack
-size (a quantity of `2` means two packs; a scanned `1.5 kg` converts
-directly), the item details show what's left, and it can be corrected in the
-edit form.
+size (or the amount given; a scanned `1.5 kg` converts directly), the item
+details show what's left, and it can be corrected in the edit form.
+
+Every item has one running total, its **amount** (`amount` + `amount_unit`):
+that's what recipes take from and the shopping list checks. There's no
+separate quantity: an older automation's `quantity` (`"500 g"`, `"11"`) is
+read once as the starting amount and not stored. A food without a unit
+counts in pieces (an ingredient starts at one); a dish without one is counted
+by its **portions** — separately labelled tubs, each with its own sticker
+code — rather than an amount. Giving a food a unit later recounts its items
+in it.
 
 `fridge_assistant.consume_ingredients` takes a recipe's lines out of stock:
 
@@ -515,7 +523,7 @@ Developer Tools → Actions.
 
 | Service | Description | Key fields |
 |---|---|---|
-| `fridge_assistant.add_item` | Add an item. Expiry is estimated automatically from contents + location if not given. `location: auto` puts it where its template keeps longest (cupboard, fridge or freezer). | `name`, `contents`, `location`, `added_date`, `expiry_date`, `quantity`, `portions` |
+| `fridge_assistant.add_item` | Add an item. Expiry is estimated automatically from contents + location if not given. `location: auto` puts it where its template keeps longest (cupboard, fridge or freezer). | `name`, `contents`, `location`, `added_date`, `expiry_date`, `amount`, `amount_unit`, `portions` |
 | `fridge_assistant.update_item` | Update fields on an existing item. | `id`, *(any item field)* |
 | `fridge_assistant.remove_item` | Delete an item outright (no history entry). | `id` |
 | `fridge_assistant.complete_item` | Finish an item as eaten or tossed — logged to history with who/when. | `id`, `action` (`eaten` / `tossed`) |

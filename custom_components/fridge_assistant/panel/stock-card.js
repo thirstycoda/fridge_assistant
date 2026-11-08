@@ -831,7 +831,7 @@ class FridgeAssistantStockCard extends HTMLElement {
       n.emoji = n.emoji || realEmoji(tpl.emoji) || "";
     }
     const fits = (g) => (g && n.units.includes(g.unit) ? g : null);
-    const size = fits(seed.size) || fits(parseSize(seed.quantity)) || fits(parseSize(n.name))
+    const size = fits(seed.size) || fits(parseSize(seed.sizeText)) || fits(parseSize(n.name))
       || (tpl && tpl.pack_amount && tpl.amount_unit ? { quantity: tpl.pack_amount, unit: tpl.amount_unit } : null);
     if (size) { n.amount = String(Math.round(size.quantity * 100) / 100); n.unit = size.unit; }
     else n.unit = tpl && tpl.amount_unit ? tpl.amount_unit : "each";
@@ -1101,7 +1101,7 @@ class FridgeAssistantStockCard extends HTMLElement {
       barcode: code,
       photo: src.photo || "",
       emoji: realEmoji(src.emoji) || "",
-      quantity: (product && product.quantity) || src.quantity || "",
+      sizeText: (product && product.size) || src.size || "",
     });
     if (!src.name) this._toast("Barcode not recognised — give it a name.");
   }

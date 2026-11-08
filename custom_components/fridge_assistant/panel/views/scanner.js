@@ -302,7 +302,7 @@ export async function onRetailBarcode(panel, code) {
   panel._openAddModal({
     name: src.name,
     category: src.category || null,
-    quantity: src.quantity || "",
+    size: src.size || "",
     photo: src.photo || "",
     emoji: src.emoji || undefined,
     kind: src.kind || undefined,

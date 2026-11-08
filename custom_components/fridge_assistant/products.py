@@ -122,7 +122,8 @@ async def async_lookup_barcode(
         "barcode": code,
         "name": name,
         "brand": (product.get("brands") or "").split(",")[0].strip(),
-        "quantity": (product.get("quantity") or "").strip(),
+        # The pack's size as printed ("500 g", "4 x 125g").
+        "size": (product.get("quantity") or "").strip(),
         "category": _category_from_tags(product.get("categories_tags")),
         "photo": product.get("image_front_small_url") or "",
         "source": "openfoodfacts",

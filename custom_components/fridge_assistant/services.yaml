@@ -24,8 +24,15 @@ add_item:
     expiry_date:
       selector:
         text:
-    quantity:
-      example: 2 bakjes
+    amount:
+      example: 500
+      selector:
+        number:
+          min: 0
+          step: any
+          mode: box
+    amount_unit:
+      example: g
       selector:
         text:
     portions:

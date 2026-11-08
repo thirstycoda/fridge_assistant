@@ -516,6 +516,9 @@ ha-icon{--mdc-icon-size:18px;vertical-align:-4px;}
 .po-undo:hover{background:var(--fa-card);}
 /* Add-modal portions stepper row */
 .pstep-row{display:flex;align-items:center;gap:12px;}
+.amt-row{display:flex;gap:8px;}
+.amt-row input{flex:1 1 auto;min-width:0;}
+.amt-row select{flex:0 0 auto;}
 .pstep-row .ps-note{margin-top:0;flex:1;}
 
 /* ------------------------------------------------- touch & motion polish */

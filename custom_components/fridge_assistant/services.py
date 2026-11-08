@@ -111,7 +111,8 @@ _SAMPLE_ITEM = {
     "kind": "dish",
     "added_date": "2026-07-20",
     "expiry_date": "2026-09-20",
-    "quantity": "2 bakjes",
+    "amount": 2,
+    "amount_unit": "each",
 }
 
 EXPORT_LABEL_SCHEMA = vol.Schema(
@@ -139,6 +140,8 @@ ADD_ITEM_SCHEMA = vol.Schema(
         vol.Optional("template_id"): cv.string,
         vol.Optional("added_date"): cv.string,
         vol.Optional("expiry_date"): cv.string,
+        # Old automations' typed quantity ("2", "500 g"): read once as the
+        # starting amount, never stored. Prefer amount + amount_unit.
         vol.Optional("quantity"): cv.string,
         vol.Optional("portions"): vol.All(
             vol.Coerce(int), vol.Range(min=1, max=MAX_PORTIONS)
@@ -148,8 +151,10 @@ ADD_ITEM_SCHEMA = vol.Schema(
         vol.Optional("photo"): cv.string,
         vol.Optional("notes"): cv.string,
         vol.Optional("barcode"): cv.string,
-        # How much is in it, in the template's unit; defaults to the pack size.
+        # How much is in it (the running total). In amount_unit when given,
+        # else the food's unit; defaults to the food's usual pack size.
         vol.Optional("amount"): vol.Coerce(float),
+        vol.Optional("amount_unit"): cv.string,
     }
 )
 

@@ -275,6 +275,9 @@ title: Pantry      # optional
   in from the barcode. The number can be typed if the camera can't read it.
 - **Add** (plus icon) finds a food among the templates, or creates a new one.
 
+Scan and Add float at the bottom right of the screen, so they stay in reach
+however far down the list you are.
+
 Everything added here goes to the card's location.
 
 ## Meal plan card

@@ -121,7 +121,8 @@ function loadZXing() {
 const STYLE = `
   :host { --r: 14px; }
   [hidden] { display: none !important; }
-  ha-card { padding: 16px; }
+  /* Room at the bottom so the floating buttons don't sit on the last row. */
+  ha-card { padding: 16px 16px 88px; }
   button { font: inherit; cursor: pointer; color: var(--primary-text-color); background: none; border: none; padding: 0; }
   button:disabled { opacity: .45; cursor: default; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 12px;
@@ -224,7 +225,20 @@ const STYLE = `
   .sst.bad { color: var(--error-color, #db4437); }
   .linkbtn { color: var(--primary-color); font-weight: 500; padding: 6px 0; }
 
-  .toast { position: fixed; inset: auto 0 24px 0; margin: 0 auto; width: max-content; max-width: calc(100vw - 32px);
+  .fabs { display: none; position: fixed; margin: 0; padding: 0; border: none; background: transparent; overflow: visible;
+    inset: auto calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) auto;
+    align-items: center; gap: 12px; }
+  .fabs:popover-open { display: flex; }
+  @supports not selector(:popover-open) { .fabs { display: flex; z-index: 5; } }
+  .fab { display: flex; align-items: center; justify-content: center; padding: 0; width: 56px; height: 56px;
+    border-radius: 16px; border: none; box-shadow: 0 3px 10px rgba(0,0,0,.3); }
+  .fab ha-icon { --mdc-icon-size: 26px; }
+  .fab.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .fab.mini { width: 48px; height: 48px; border-radius: 14px; background: var(--card-background-color); }
+  .fab.mini ha-icon { --mdc-icon-size: 22px; }
+
+  /* Above the floating buttons. */
+  .toast { position: fixed; inset: auto 0 calc(88px + env(safe-area-inset-bottom, 0px)) 0; margin: 0 auto; width: max-content; max-width: calc(100vw - 32px);
     border: none; border-radius: 14px; padding: 12px 14px 12px 16px; background: #323232; color: #fff;
     box-shadow: 0 6px 20px rgba(0,0,0,.3); display: none; align-items: center; gap: 14px; font-size: 14px; }
   .toast:popover-open, .toast.inline { display: flex; }
@@ -250,15 +264,19 @@ class FridgeAssistantStockCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
-    if (!this.shadowRoot) this._build();
+    if (!this.shadowRoot) { this._build(); this._showFabs(this.isConnected); }
     if (first || !this._unsub) this._subscribe();
   }
 
   getCardSize() { return 8; }
 
-  connectedCallback() { if (this._hass && !this._unsub) this._subscribe(); }
+  connectedCallback() {
+    if (this._hass && !this._unsub) this._subscribe();
+    this._showFabs(true);
+  }
 
   disconnectedCallback() {
+    this._showFabs(false);
     this._stopCamera();
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
   }
@@ -342,6 +360,10 @@ class FridgeAssistantStockCard extends HTMLElement {
         <div id="list"></div>
         <div class="toast" id="toast" popover="manual"></div>
       </ha-card>
+      <div class="fabs" id="fabs" popover="manual">
+        <button class="fab mini" data-act="add" aria-label="Add" title="Add"><ha-icon icon="mdi:plus"></ha-icon></button>
+        <button class="fab primary" data-act="scan" aria-label="Scan" title="Scan"><ha-icon icon="mdi:barcode-scan"></ha-icon></button>
+      </div>
       <dialog id="dlg"></dialog>`;
     root.getElementById("q").value = this._q;
     root.getElementById("q").addEventListener("input", (e) => { this._q = e.target.value; this._renderList(); });
@@ -361,6 +383,14 @@ class FridgeAssistantStockCard extends HTMLElement {
     this._renderAll();
   }
 
+  /* Floating Add / Scan buttons, in the top layer so nothing on the page
+   * (HA's scrolling view, card containment) can clip or cover them. */
+  _showFabs(on) {
+    const f = this.shadowRoot && this.shadowRoot.getElementById("fabs");
+    if (!f || !f.showPopover) return;
+    try { if (on) f.showPopover(); else f.hidePopover(); } catch (e) { /* already in that state */ }
+  }
+
   _renderAll() { this._renderHead(); this._renderList(); }
 
   _renderHead() {
@@ -369,9 +399,7 @@ class FridgeAssistantStockCard extends HTMLElement {
     const n = this._items().filter((i) => i.location === this._config.location).length;
     h.innerHTML = `
       <div class="title">${esc(this._config.title)}
-        <div class="sub">${this._state ? `${n} item${n === 1 ? "" : "s"}` : "Loading…"}</div></div>
-      <button class="btn icon" data-act="add" aria-label="Add" title="Add"><ha-icon icon="mdi:plus"></ha-icon></button>
-      <button class="btn icon primary" data-act="scan" aria-label="Scan" title="Scan"><ha-icon icon="mdi:barcode-scan"></ha-icon></button>`;
+        <div class="sub">${this._state ? `${n} item${n === 1 ? "" : "s"}` : "Loading…"}</div></div>`;
   }
 
   _renderList() {

@@ -140,7 +140,7 @@ const STYLE = `
   .head { display: flex; align-items: center; gap: 8px; }
   .title { flex: 1 1 auto; font-size: 20px; font-weight: 600; line-height: 1.2; }
   .sub { font-size: 14px; font-weight: 400; color: var(--secondary-text-color); }
-  .search { position: relative; margin-top: 12px; }
+  .search { position: relative; margin-top: 0; }
   .search ha-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); --mdc-icon-size: 20px; color: var(--secondary-text-color); }
   input, select { font: inherit; color: var(--primary-text-color); background: var(--card-background-color);
     border: 1px solid var(--divider-color); border-radius: 12px; padding: 10px 12px; box-sizing: border-box; min-width: 0; }
@@ -377,7 +377,6 @@ class FridgeAssistantStockCard extends HTMLElement {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = `<style>${STYLE}</style>
       <div class="bar">
-        <div class="head" id="head"></div>
         <div class="search"><ha-icon icon="mdi:magnify"></ha-icon>
           <input id="q" type="search" placeholder="Search" autocomplete="off" enterkeyhint="search"></div>
       </div>
@@ -415,13 +414,13 @@ class FridgeAssistantStockCard extends HTMLElement {
 
   _renderAll() { this._renderHead(); this._renderList(); }
 
+  /* The tab already says where this is, so no title: the count lives in
+   * the search box ("Search 23 items"). */
   _renderHead() {
-    const h = this.shadowRoot && this.shadowRoot.getElementById("head");
-    if (!h || !this._config) return;
+    const q = this.shadowRoot && this.shadowRoot.getElementById("q");
+    if (!q || !this._config) return;
     const n = this._items().filter((i) => i.location === this._config.location).length;
-    h.innerHTML = `
-      <div class="title">${esc(this._config.title)}
-        <div class="sub">${this._state ? `${n} item${n === 1 ? "" : "s"}` : "Loading…"}</div></div>`;
+    q.placeholder = this._state ? `Search ${n} item${n === 1 ? "" : "s"}` : "Loading…";
   }
 
   _renderList() {

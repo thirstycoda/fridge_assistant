@@ -120,8 +120,12 @@ function loadZXing() {
 const STYLE = `
   :host { --r: 14px; }
   [hidden] { display: none !important; }
-  /* Room at the bottom so the floating buttons don't sit on the last row. */
-  ha-card { padding: 16px 16px 88px; }
+  /* Laid out like the Plan tab: a header card, then a card per aisle. Room
+   * at the bottom so the floating buttons don't sit on the last row. */
+  :host { display: block; padding-bottom: 76px; }
+  ha-card.bar { padding: 16px; margin-bottom: 12px; }
+  ha-card.aisle { padding: 10px 16px 4px; margin-bottom: 12px; }
+  ha-card.aisle .row:last-child { border-bottom: none; }
   button { font: inherit; cursor: pointer; color: var(--primary-text-color); background: none; border: none; padding: 0; }
   button:disabled { opacity: .45; cursor: default; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 12px;
@@ -142,7 +146,7 @@ const STYLE = `
   input:focus, select:focus { outline: 2px solid var(--primary-color); outline-offset: -1px; }
   .search input { width: 100%; padding-left: 40px; background: var(--secondary-background-color); border-color: transparent; }
 
-  .aisle-h { display: flex; align-items: center; gap: 6px; margin-top: 18px; padding: 0 2px 4px; font-size: 12px; font-weight: 600;
+  .aisle-h { display: flex; align-items: center; gap: 6px; margin-top: 0; padding: 0 2px 4px; font-size: 12px; font-weight: 600;
     text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color);
     border-bottom: 2px solid color-mix(in srgb, var(--tint) 45%, transparent); }
   .list { display: flex; flex-direction: column; }
@@ -162,7 +166,7 @@ const STYLE = `
   .days { flex: 0 0 auto; font-size: 13px; color: var(--secondary-text-color); white-space: nowrap; }
   .days.soon { color: var(--warning-color, #f59f00); font-weight: 600; }
   .days.expired { color: var(--error-color, #db4437); font-weight: 600; }
-  .empty { margin: 18px 4px 4px; color: var(--secondary-text-color); }
+  .empty { margin: 6px 4px 4px; padding: 0 12px; color: var(--secondary-text-color); }
 
   dialog { border: none; padding: 0; border-radius: 22px; width: min(440px, calc(100vw - 32px)); max-width: none;
     max-height: min(88vh, 760px); background: var(--card-background-color, #fff); color: var(--primary-text-color);
@@ -371,13 +375,13 @@ class FridgeAssistantStockCard extends HTMLElement {
   _build() {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = `<style>${STYLE}</style>
-      <ha-card>
+      <ha-card class="bar">
         <div class="head" id="head"></div>
         <div class="search"><ha-icon icon="mdi:magnify"></ha-icon>
           <input id="q" type="search" placeholder="Search" autocomplete="off" enterkeyhint="search"></div>
-        <div id="list"></div>
-        <div class="toast" id="toast" popover="manual"></div>
       </ha-card>
+      <div id="list"></div>
+      <div class="toast" id="toast" popover="manual"></div>
       <div class="fabs" id="fabs" popover="manual">
         <button class="fab mini" data-act="add" aria-label="Add" title="Add"><ha-icon icon="mdi:plus"></ha-icon></button>
         <button class="fab primary" data-act="scan" aria-label="Scan" title="Scan"><ha-icon icon="mdi:barcode-scan"></ha-icon></button>
@@ -434,8 +438,8 @@ class FridgeAssistantStockCard extends HTMLElement {
     box.innerHTML = AISLES.map((a) => {
       const these = groups.filter((g) => g.aisle === a).sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: "base" }));
       if (!these.length) return "";
-      return `<div class="aisle-h" style="--tint:${a.color}"><span>${a.emoji}</span>${esc(a.name)}</div>
-        <div class="list">${these.map((g) => this._rowHtml(g)).join("")}</div>`;
+      return `<ha-card class="aisle"><div class="aisle-h" style="--tint:${a.color}"><span>${a.emoji}</span>${esc(a.name)}</div>
+        <div class="list">${these.map((g) => this._rowHtml(g)).join("")}</div></ha-card>`;
     }).join("");
   }
 

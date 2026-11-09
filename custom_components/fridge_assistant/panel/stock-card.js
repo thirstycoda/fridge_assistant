@@ -704,12 +704,11 @@ class FridgeAssistantStockCard extends HTMLElement {
     const ports = portionsOf(it);
     const open = openPortions(it);
     const multi = ports.length > 1;
-    // The main view's counter already says how many; don't repeat it.
-    const counted = !d.sub && it.amount != null && (it.amount_unit || "each") === "each" && !multi;
+    // The main view's How many / How much already says how much there is
+    // (and what it started at doesn't matter), so only the Tossed/Print
+    // steps repeat the current amount under the name.
     const amountLine = [
-      it.amount != null && !counted ? (it.amount_initial && it.amount_initial !== it.amount
-        ? `${fmtAmount(it.amount, it.amount_unit)} of ${fmtAmount(it.amount_initial, it.amount_unit)} left`
-        : `${fmtAmount(it.amount, it.amount_unit)}${it.amount_unit && it.amount_unit !== "each" ? "" : " left"}`) : "",
+      d.sub && it.amount != null ? fmtAmount(it.amount, it.amount_unit) : "",
       multi ? `${open.length} of ${ports.length} portions` : "",
       it.location !== this._config.location ? `In the ${LOC[it.location] ? LOC[it.location].label.toLowerCase() : it.location}` : "",
     ].filter(Boolean).join(" · ");

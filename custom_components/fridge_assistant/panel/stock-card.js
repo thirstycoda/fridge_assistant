@@ -622,7 +622,7 @@ class FridgeAssistantStockCard extends HTMLElement {
     return `${head}
       ${count}
       <div class="acts one">
-        <button class="btn primary" data-act="eat" ${busy}><ha-icon icon="mdi:silverware-fork-knife"></ha-icon>Eaten</button>
+        <button class="btn primary" data-act="eat" ${busy}><ha-icon icon="mdi:silverware-fork-knife"></ha-icon>Eaten all</button>
       </div>
       <div class="minor">
         <button data-act="toss" ${busy}><ha-icon icon="mdi:delete-outline"></ha-icon>Tossed</button>

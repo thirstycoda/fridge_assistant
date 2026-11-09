@@ -1763,12 +1763,33 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
   getCardSize() { return 12; }
 
   connectedCallback() {
+    // Opening the Plan tab (or coming back to the app) lands on today.
+    this._wantToday = true;
     if (this._hass) this._load();
     if (!this._tick) this._tick = scheduleRefresh(() => this._load());
+    if (!this._onVisible) {
+      this._onVisible = () => {
+        if (document.visibilityState === "visible" && this.isConnected) { this._wantToday = true; this._scrollToToday(); }
+      };
+      document.addEventListener("visibilitychange", this._onVisible);
+    }
+    this._scrollToToday();
   }
 
   disconnectedCallback() {
     if (this._tick) { this._tick(); this._tick = null; }
+    if (this._onVisible) { document.removeEventListener("visibilitychange", this._onVisible); this._onVisible = null; }
+  }
+
+  /* Bring today's day to the top, under HA's header, once per arrival. */
+  _scrollToToday() {
+    if (!this._wantToday || this._offset !== 0 || !this._plan || !this._plan.length) return;
+    const card = this._days.get(isoDate(new Date()));
+    if (!card || !card.isConnected) return;
+    this._wantToday = false;
+    card.style.scrollMarginTop = "calc(var(--header-height, 56px) + 12px)";
+    // After the day cards have laid out (they render their meals on plan set).
+    requestAnimationFrame(() => requestAnimationFrame(() => card.scrollIntoView({ block: "start" })));
   }
 
   _week() {
@@ -1892,6 +1913,7 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
         return c;
       });
       days.replaceChildren(...cards);
+      this._scrollToToday();
     } else {
       days.replaceChildren();
     }

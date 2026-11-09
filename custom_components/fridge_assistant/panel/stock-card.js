@@ -637,14 +637,14 @@ class FridgeAssistantStockCard extends HTMLElement {
         <button class="btn" data-act="another" ${busy}><ha-icon icon="mdi:plus"></ha-icon>Add another</button>
       </div>
       <div class="facts">
-        <div class="fact"><span>Expires</span>${it.days_left != null && sib.length < 2
-          ? `<small class="days ${esc(it.status || "")}">${esc(daysText(it.days_left))}</small>` : ""}
-          <input id="exp" type="date" value="${esc(it.expiry_date || "")}" ${busy} aria-label="Expiry date"></div>
-        ${it.kind === "dish" || multi ? `<div class="fact"><span>Portions</span><div class="step">
+        ${multi || (it.kind === "dish" && it.amount == null) ? `<div class="fact"><span>Portions</span><div class="step">
           <button data-act="pminus" aria-label="Fewer portions" ${ports.length <= Math.max(1, consumed + (open.length ? 1 : 0)) || this._busy ? "disabled" : ""}><ha-icon icon="mdi:minus"></ha-icon></button>
           <b>${ports.length}</b>
           <button data-act="pplus" aria-label="More portions" ${ports.length >= 24 || this._busy ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon></button></div></div>`
           : this._totalHtml(it, busy)}
+        <div class="fact"><span>Expires</span>${it.days_left != null && sib.length < 2
+          ? `<small class="days ${esc(it.status || "")}">${esc(daysText(it.days_left))}</small>` : ""}
+          <input id="exp" type="date" value="${esc(it.expiry_date || "")}" ${busy} aria-label="Expiry date"></div>
         <div class="fact"><span>Move to</span><div class="chips">${LOCATIONS.filter((l) => l.key !== it.location).map((l) =>
           `<button class="chip" data-act="move" data-loc="${l.key}" ${busy}><ha-icon icon="${l.icon}"></ha-icon>${l.label}</button>`).join("")}</div></div>
       </div>`;

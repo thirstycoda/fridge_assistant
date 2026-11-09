@@ -75,7 +75,7 @@ export function openInspector(panel, item, { highlight = null } = {}) {
         <button class="icon-btn" id="d-close" aria-label="${panel.t("closeBtn")}"><ha-icon icon="mdi:close"></ha-icon></button>
       </div>
       <div class="d-status" style="--c:${col}">${daysLabel(i.days_left, lang)}${i.expiry_date ? " · " + fmtDate(i.expiry_date, lang) : ""}</div>
-      <div class="po-sec">
+      ${total > 1 ? `<div class="po-sec">
         <div class="po-head">
           <span>${panel.t("portionsLabel")}</span>
           <span class="pstep">
@@ -85,8 +85,8 @@ export function openInspector(panel, item, { highlight = null } = {}) {
           </span>
         </div>
         <small class="ps-note">${panel.t("portionsStepperNote")}</small>
-        ${total > 1 ? `<div class="po-rows">${portions.map(portionRow).join("")}</div>` : ""}
-      </div>
+        <div class="po-rows">${portions.map(portionRow).join("")}</div>
+      </div>` : i.kind === "dish" ? `<button class="link" id="po-plus">${panel.t("splitPortionsBtn")}</button>` : ""}
       <div class="d-rows">
         <div class="d-row"><span>${panel.t("locationLabel")}</span><b>${lm.emoji || ""} ${esc(lm.label || i.location)}</b></div>
         ${i.added_by_name ? `<div class="d-row"><span>${panel.t("addedByLabel")}</span><b class="who">${panel._avatar(i.added_by_name, i.added_by_picture, 24)} ${esc(i.added_by_name)}</b></div>` : ""}

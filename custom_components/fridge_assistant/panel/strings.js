@@ -278,6 +278,7 @@ export const STRINGS = {
     printFailedError: (err) => `Print mislukt: ${err}`,
 
     portionsLabel: "Porties",
+    splitPortionsBtn: "Verdelen in porties met een eigen sticker",
     portionsFieldNote: "Elke portie krijgt een eigen stickercode (bv. AB12-1)",
     portionsStepperNote: "Zo is de batch verdeeld · − haalt een ongebruikte portie weg",
     portionRowLabel: (n) => `Portie ${n}`,
@@ -525,6 +526,7 @@ export const STRINGS = {
     printFailedError: (err) => `Print failed: ${err}`,
 
     portionsLabel: "Portions",
+    splitPortionsBtn: "Split into portions with their own labels",
     portionsFieldNote: "Each portion gets its own sticker code (e.g. AB12-1)",
     portionsStepperNote: "How the batch is split · − removes an unused portion",
     portionRowLabel: (n) => `Portion ${n}`,

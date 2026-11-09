@@ -62,7 +62,7 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
     <div class="seg" id="f-kind">
       ${Object.keys(kinds).map((k) => { const km = panel._kindMeta(k); return `<button type="button" data-kind="${k}" class="${m.kind === k ? "on" : ""}">${km.emoji || ""} ${km.short}</button>`; }).join("")}
     </div>
-    ${!isEdit ? `<label class="field"><span>${panel.t("portionsLabel")}</span>
+    ${!isEdit ? `<label class="field${m.kind === "dish" ? "" : " hidden"}" id="f-portions"><span>${panel.t("portionsLabel")}</span>
       <div class="pstep-row">
         <span class="pstep">
           <button type="button" class="ps-btn" id="ps-minus" disabled><ha-icon icon="mdi:minus"></ha-icon></button>
@@ -107,6 +107,15 @@ export function openAddModal(panel, prefill = {}, editItem = null) {
     m.kind = k;
     const ke = q("#f-kind");
     if (ke) ke.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.kind === k));
+    // Labelled portions are for a batch split into tubs; not for groceries.
+    const pf = q("#f-portions");
+    if (pf) pf.classList.toggle("hidden", k !== "dish");
+    if (k !== "dish" && m.portions !== 1) {
+      m.portions = 1;
+      const n = q("#ps-n"), mi = q("#ps-minus");
+      if (n) n.textContent = "1";
+      if (mi) mi.disabled = true;
+    }
   };
   const updateHint = () => {
     const val = expEl.value;

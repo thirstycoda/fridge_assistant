@@ -2,9 +2,8 @@
  *
  * Everything in stock in one place (the pantry, by default), grouped by
  * supermarket aisle like the shopping list and unpack cards. Tap a food to
- * eat, toss, print its label, change its date, total (or a dish's portions)
- * or place, or add
- * another. Scan a shop barcode or a printed label to open the same popup;
+ * set how many / how much there is, eat, toss, print its label, change its
+ * date or place. Scan a shop barcode or a printed label to open the same popup;
  * a barcode that isn't in stock opens an add form filled in from the product.
  * Add finds a food from the templates (or makes a new one).
  *
@@ -473,7 +472,6 @@ class FridgeAssistantStockCard extends HTMLElement {
       case "pminus": case "pplus": this._portions(a === "pplus" ? 1 : -1); break;
       case "cminus": case "cplus": this._stepCount(a === "cplus" ? 1 : -1); break;
       case "move": this._move(el.dataset.loc); break;
-      case "another": this._another(); break;
       case "type": if (d) { d.typing = !d.typing; this._renderScanExtras(); if (d.typing) this._focus("code"); } break;
       case "lookup": this._lookupTyped(); break;
       case "pick": this._pickTemplate(el.dataset.id); break;
@@ -629,7 +627,6 @@ class FridgeAssistantStockCard extends HTMLElement {
       <div class="minor">
         <button data-act="toss" ${busy}><ha-icon icon="mdi:delete-outline"></ha-icon>Tossed</button>
         <button data-act="print" ${busy}><ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>
-        <button data-act="another" ${busy}><ha-icon icon="mdi:plus"></ha-icon>Add another</button>
       </div>
       <div class="facts">
         <div class="fact"><span>Expires</span>${it.days_left != null && sib.length < 2
@@ -813,19 +810,6 @@ class FridgeAssistantStockCard extends HTMLElement {
       this._toast(`${it.name} moved to the ${LOC[loc].label.toLowerCase()}`, {
         action: "Undo", onAction: () => this._ws("update_item", { item_id: it.id, changes: { location: from } }).catch(() => {}),
       });
-    });
-  }
-
-  _another() {
-    const it = this._dlg && this._item(this._dlg.id);
-    if (!it) return;
-    const tpl = this._tpl(it.template_id);
-    const per = it.amount_initial != null && it.amount_unit
-      ? { quantity: it.amount_initial, unit: it.amount_unit }
-      : tpl && tpl.pack_amount && tpl.amount_unit ? { quantity: tpl.pack_amount, unit: tpl.amount_unit } : null;
-    this._openNew({
-      name: it.name, template_id: it.template_id || null, barcode: it.barcode || null,
-      photo: it.photo || "", emoji: this._look(it).emoji, size: per,
     });
   }
 

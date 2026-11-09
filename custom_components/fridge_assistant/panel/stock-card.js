@@ -198,6 +198,17 @@ const STYLE = `
     background: none; border: none; color: var(--secondary-text-color); font: inherit; font-size: 13px; cursor: pointer; }
   .minor button ha-icon { --mdc-icon-size: 18px; }
   .minor button:disabled { opacity: .5; }
+  .uses { margin-top: 10px; padding: 10px 2px 2px; border-top: 1px solid var(--divider-color); }
+  .uses-h { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); margin-bottom: 4px; }
+  .uses-none { font-size: 14px; color: var(--secondary-text-color); padding: 2px 0 4px; }
+  .use { display: grid; grid-template-columns: 1fr auto; column-gap: 12px; padding: 6px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 60%, transparent); }
+  .use:last-of-type { border-bottom: none; }
+  .use-when { grid-column: 1 / -1; font-size: 12px; color: var(--secondary-text-color); }
+  .use-meal { font-size: 15px; }
+  .use-qty { font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .uses-sum { font-size: 13px; color: var(--secondary-text-color); padding: 4px 0 2px; }
+  .uses-sum b { color: var(--error-color); font-weight: 600; }
   .hero { margin-top: 14px; padding: 12px 14px 14px; border-radius: 16px; background: var(--secondary-background-color); text-align: center; }
   .hero-lbl { font-size: 13px; color: var(--secondary-text-color); margin-bottom: 4px; }
   .hero .step.big { padding: 0; }
@@ -279,7 +290,7 @@ class FridgeAssistantStockCard extends HTMLElement {
   setConfig(config) {
     const location = (config && config.location) || "pantry";
     if (!LOC[location]) throw new Error("location must be cupboard, fridge, freezer or pantry");
-    this._config = { title: LOC[location].label, ...config, location };
+    this._config = { title: LOC[location].label, week_start: "saturday", todo_entity: "todo.planned_meals", ...config, location };
     this._q = this._q || "";
     if (this.shadowRoot) this._renderAll();
   }
@@ -530,7 +541,118 @@ class FridgeAssistantStockCard extends HTMLElement {
   _openItem(id) {
     const it = this._item(id);
     if (!it) return;
+    this._planUses();
     this._openDlg({ mode: "item", id, sub: null });
+  }
+
+  /* ---- this week's meals that use it -------------------------------------- */
+
+  /* The rest of this week's Mealie plan (from today, meals not yet marked
+   * made), as ingredient lines matched to foods by Fridge Assistant's own
+   * stock check, kept a few minutes. Map template_id -> {uses, need, unit,
+   * short}. */
+  _planUses(force = false) {
+    const fresh = this._uses && Date.now() - this._uses.at < 3 * 60 * 1000;
+    if (this._uses && (fresh || this._uses.loading) && !force) return;
+    this._uses = { at: Date.now(), loading: true, map: (this._uses && this._uses.map) || null, error: null };
+    const done = (map, error) => {
+      this._uses = { at: Date.now(), loading: false, map, error };
+      if (this._dlg && this._dlg.mode === "item" && !this._dlg.sub) this._renderDlg();
+    };
+    this._loadPlanUses().then((map) => done(map, null), (err) => done(null, err.message || String(err)));
+  }
+
+  async _loadPlanUses() {
+    const P = await import(new URL(`./lib/plan.js${VER}`, import.meta.url));
+    const cfg = this._config;
+    const week = P.shoppingWeek(cfg.week_start, cfg.week_start, 0);
+    const plan = await P.fetchPlanRange(this._hass, cfg.mealie_entry, P.isoDate(week.today), P.isoDate(week.end));
+    // Meals already marked made have taken their ingredients.
+    const made = new Set();
+    try {
+      const res = await this._hass.callWS({ type: "todo/item/list", entity_id: cfg.todo_entity });
+      for (const t of (res && res.items) || []) {
+        try {
+          const info = JSON.parse(t.description || "{}") || {};
+          if (info.mealplan_id != null && info.done) made.add(String(info.mealplan_id));
+        } catch (e) { /* not one of ours */ }
+      }
+    } catch (e) { /* no to-do list: count every meal */ }
+    const lines = [];
+    const none = new Set();
+    for (const e of plan) {
+      if (made.has(String(e.mealplan_id))) continue;
+      const tag = (name) => `${name}\u0001${e.entry_type || ""}`;
+      if (e.recipe) {
+        const recipe = await this._recipe(P, e.recipe.slug);
+        lines.push(...P.recipeLines(recipe, tag(recipe.name), e.mealplan_date, none));
+      } else {
+        for (const a of P.noteItems(e).items) {
+          lines.push({ food: a.food.toLowerCase(), quantity: a.quantity, unit: a.unit === "each" ? "" : a.unit,
+            source: tag(e.title || "Note"), date: e.mealplan_date });
+        }
+      }
+    }
+    const map = new Map();
+    if (!lines.length) return map;
+    const res = await this._hass.callWS({ type: "fridge_assistant/stock_check", lines });
+    for (const g of res.groups || []) {
+      if (!g.template_id) continue;
+      map.set(g.template_id, {
+        need: g.need, unit: g.unit, short: g.short,
+        uses: (g.sources || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date))),
+      });
+    }
+    return map;
+  }
+
+  _recipe(P, slug) {
+    this._recipes = this._recipes || new Map();
+    if (!this._recipes.has(slug)) {
+      const p = P.mealieEntryId(this._hass, this._config.mealie_entry).then((entry) => this._hass.callWS({
+        type: "call_service", domain: "mealie", service: "get_recipe",
+        service_data: { config_entry_id: entry, recipe_id: slug }, return_response: true,
+      })).then((res) => res.response.recipe);
+      p.catch(() => this._recipes.delete(slug));
+      this._recipes.set(slug, p);
+    }
+    return this._recipes.get(slug);
+  }
+
+  _usesHtml(it) {
+    const u = this._uses;
+    let body;
+    if (!u || (u.loading && !u.map)) body = `<div class="uses-none">Checking this week's meals…</div>`;
+    else if (u.error && !u.map) body = `<div class="uses-none">Couldn't check the meal plan (${esc(u.error)}).</div>`;
+    else {
+      const g = it.template_id ? u.map.get(it.template_id) : null;
+      if (!g || !g.uses.length) body = `<div class="uses-none">Not needed for this week's meal plan.</div>`;
+      else {
+        const today = new Date();
+        const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+        const when = (date, slot) => {
+          const day = date === iso(today) ? "Today" : date === iso(tomorrow) ? "Tomorrow"
+            : new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long" });
+          return ["breakfast", "lunch", "dinner"].includes(slot) ? `${day} · ${slot}` : day;
+        };
+        const qty = (s) => {
+          if (!s.quantity) return "to taste";
+          const n = Math.round(s.quantity * 100) / 100;
+          return s.unit ? `${n} ${s.unit}` : `${n}`;
+        };
+        body = g.uses.map((s) => {
+          const [meal, slot] = String(s.source || "").split("\u0001");
+          return `<div class="use"><div class="use-when">${esc(when(s.date, slot))}</div>
+            <div class="use-meal">${esc(meal)}</div><div class="use-qty">${esc(qty(s))}</div></div>`;
+        }).join("");
+        if (g.unit && g.need) {
+          body += `<div class="uses-sum">${esc(fmtAmount(g.need, g.unit))} in all this week${g.short > 0
+            ? ` · <b>${esc(fmtAmount(g.short, g.unit))} short</b>` : ""}</div>`;
+        }
+      }
+    }
+    return `<div class="uses"><div class="uses-h">This week's meals</div>${body}</div>`;
   }
 
   /* The other items of the same food in the same place, earliest first. */
@@ -632,6 +754,7 @@ class FridgeAssistantStockCard extends HTMLElement {
         <button data-act="toss" ${busy}><ha-icon icon="mdi:delete-outline"></ha-icon>Tossed</button>
         <button data-act="print" ${busy}><ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>
       </div>
+      ${this._usesHtml(it)}
       <div class="facts">
         <div class="fact"><span>Expires</span>${it.days_left != null && sib.length < 2
           ? `<small class="days ${esc(it.status || "")}">${esc(daysText(it.days_left))}</small>` : ""}

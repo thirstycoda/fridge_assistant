@@ -269,7 +269,10 @@ title: Pantry      # optional
   things counted in pieces like oranges or sausage rolls, a number in g/kg or
   ml/l otherwise; a dish split into labelled tubs shows its portions), then
   **Eaten all** (finishes it, with Undo), **Tossed** and **Print label** (pick
-  which portions), its date and where to move it.
+  which portions), then **This week's meals**: the meals left in this week's
+  Mealie plan that use it (when, and how much; "not needed" otherwise), its
+  date and where to move it. The plan week starts on `week_start` (default
+  `saturday`); meals marked made on `todo_entity` are left out.
 - **Scan** (barcode icon) a shop barcode or one of your labels: something in stock opens its
   popup (the one that runs out first); a new product opens an add form filled
   in from the barcode. The number can be typed if the camera can't read it.

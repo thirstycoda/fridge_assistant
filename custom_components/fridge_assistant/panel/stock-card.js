@@ -195,6 +195,11 @@ const STYLE = `
   .step button { width: 34px; height: 34px; border-radius: 50%; background: var(--secondary-background-color); display: flex;
     align-items: center; justify-content: center; }
   .step b { min-width: 28px; text-align: center; }
+  .step.big { justify-content: center; gap: 18px; padding: 8px 0; }
+  .step.big button { width: 52px; height: 52px; }
+  .step.big button ha-icon { --mdc-icon-size: 26px; }
+  .step.big b { font-size: 32px; min-width: 56px; }
+  .step button:disabled { opacity: .4; }
   .total { display: flex; align-items: center; gap: 6px; }
   .total input { width: 84px; padding: 6px 10px; text-align: right; }
   .total select { padding: 6px 8px; }
@@ -378,7 +383,7 @@ class FridgeAssistantStockCard extends HTMLElement {
       else if (e.target.id === "tq") { e.preventDefault(); const b = this.shadowRoot.querySelector("#tlist .row"); if (b) b.click(); }
     });
     const dlg = root.getElementById("dlg");
-    dlg.addEventListener("close", () => { this._stopCamera(); this._dlg = null; dlg.innerHTML = ""; });
+    dlg.addEventListener("close", () => { this._flushCount(); this._stopCamera(); this._dlg = null; dlg.innerHTML = ""; });
     dlg.addEventListener("click", (e) => { if (e.target === dlg) this._closeDlg(); });   // backdrop
     this._renderAll();
   }
@@ -446,13 +451,15 @@ class FridgeAssistantStockCard extends HTMLElement {
       case "close": this._closeDlg(); break;
       case "back": if (d) { d.sub = null; this._renderDlg(); } break;
       case "prev": case "next": this._page(a === "next" ? 1 : -1); break;
-      case "eat": if (d) { d.sub = "eat"; this._renderDlg(); this._focus("left"); } break;
+      case "eat": if (d) { d.sub = "eat"; d.left = null; this._renderDlg(); this._focus("left"); } break;
       case "saveleft": this._saveLeft(); break;
       case "toss": if (d) { d.sub = "toss"; this._renderDlg(); } break;
       case "dotoss": this._complete("tossed"); break;
       case "print": this._print(); break;
       case "doprint": this._printChosen(); break;
       case "pminus": case "pplus": this._portions(a === "pplus" ? 1 : -1); break;
+      case "cminus": case "cplus": this._stepCount(a === "cplus" ? 1 : -1); break;
+      case "lminus": case "lplus": this._stepLeft(a === "lplus" ? 1 : -1); break;
       case "move": this._move(el.dataset.loc); break;
       case "another": this._another(); break;
       case "type": if (d) { d.typing = !d.typing; this._renderScanExtras(); if (d.typing) this._focus("code"); } break;
@@ -499,6 +506,7 @@ class FridgeAssistantStockCard extends HTMLElement {
   }
 
   _closeDlg() {
+    this._flushCount();
     this._stopCamera();
     this._dlg = null;
     const dlg = this.shadowRoot && this.shadowRoot.getElementById("dlg");
@@ -518,6 +526,7 @@ class FridgeAssistantStockCard extends HTMLElement {
   }
 
   _page(step) {
+    this._flushCount();
     const d = this._dlg;
     const it = d && this._item(d.id);
     if (!it) return;
@@ -578,11 +587,26 @@ class FridgeAssistantStockCard extends HTMLElement {
       const byPortion = multi;
       const unit = it.amount != null ? (it.amount_unit || "each") : null;
       const value = byPortion ? open.length : it.amount != null ? Math.round(it.amount * 100) / 100 : "";
+      if (byPortion || unit === "each") {
+        // Counted, not weighed: step it rather than type it.
+        const max = byPortion ? open.length : Math.ceil(it.amount);
+        const left = d.left != null ? d.left : value;
+        return `${head}
+        <div class="q">${byPortion ? "How many portions are left?" : "How many are left?"}</div>
+        <div class="field"><div class="step big">
+          <button data-act="lminus" aria-label="One fewer" ${left <= 0 ? "disabled" : ""}><ha-icon icon="mdi:minus"></ha-icon></button>
+          <b id="leftn">${esc(left)}</b>
+          <button data-act="lplus" aria-label="One more" ${left >= max ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon></button>
+          <input id="left" type="hidden" value="${esc(left)}">
+        </div><div class="hint">0 means it's finished and comes off the list.</div></div>
+        <div class="foot"><button class="btn soft" data-act="back">Back</button>
+          <button class="btn primary" data-act="saveleft" ${busy}>Save</button></div>`;
+      }
       return `${head}
-        <div class="q">${byPortion ? "How many portions are left?" : "How much is left?"}</div>
+        <div class="q">How much is left?</div>
         <div class="field"><div class="inrow">
           <input id="left" class="big-in" type="number" inputmode="decimal" min="0" step="any" value="${esc(value)}">
-          ${byPortion ? "" : unit ? (unit === "each" ? "" : `<select id="leftunit">${(unit === "g" ? ["g", "kg"] : unit === "ml" ? ["ml", "l"] : [unit])
+          ${unit ? (unit === "each" ? "" : `<select id="leftunit">${(unit === "g" ? ["g", "kg"] : unit === "ml" ? ["ml", "l"] : [unit])
             .map((u) => `<option${u === unit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>`)
             : `<select id="leftunit">${ANY_UNITS.map((u) => `<option>${u}</option>`).join("")}</select>`}
         </div><div class="hint">0 means it's finished and comes off the list.</div></div>
@@ -631,13 +655,22 @@ class FridgeAssistantStockCard extends HTMLElement {
    * amount Fridge Assistant tracks. */
   _totalHtml(it, busy) {
     const unit = it.amount != null ? (it.amount_unit || "each") : null;
+    if (unit === "each") {
+      // Counted in pieces: + and − (saved a moment after the last tap).
+      const d = this._dlg;
+      const n = d && d.count != null && d.countId === it.id ? d.count : Math.round(it.amount * 100) / 100;
+      return `<div class="fact"><span>How many</span><div class="step">
+        <button data-act="cminus" aria-label="One fewer" ${n <= 1 || this._busy ? "disabled" : ""}><ha-icon icon="mdi:minus"></ha-icon></button>
+        <b id="countn">${esc(n)}</b>
+        <button data-act="cplus" aria-label="One more" ${this._busy ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon></button></div></div>`;
+    }
     const units = unit === "g" ? ["g", "kg"] : unit === "ml" ? ["ml", "l"] : unit ? [unit] : ANY_UNITS;
     // Big amounts read better in kg or l.
     let shown = unit;
     let value = it.amount != null ? it.amount : "";
     if ((unit === "g" || unit === "ml") && it.amount >= 1000) { shown = unit === "g" ? "kg" : "l"; value = it.amount / 1000; }
     if (value !== "") value = Math.round(value * 100) / 100;
-    const label = (u) => (u === "each" ? "portions" : u);
+    const label = (u) => (u === "each" ? "pieces" : u);
     return `<div class="fact"><span>Total</span><div class="total">
       <input id="total" type="number" inputmode="decimal" min="0" step="any" value="${esc(value)}" ${busy} aria-label="Total">
       <select id="totalunit" aria-label="Unit" data-unit="${shown || "each"}" ${busy}>${units.map((u) =>
@@ -665,6 +698,47 @@ class FridgeAssistantStockCard extends HTMLElement {
         action: "Undo", onAction: () => this._ws("update_item", { item_id: it.id, changes: before }).catch(() => {}),
       });
     });
+  }
+
+  /* + / − on a count: show it straight away, save once the tapping stops. */
+  _stepCount(delta) {
+    const d = this._dlg;
+    const it = d && this._item(d.id);
+    if (!it || it.amount == null) return;
+    if (d.countId !== it.id || d.count == null) { d.countId = it.id; d.count = it.amount; d.countFrom = it.amount; }
+    // Down to 1 at most: finishing it is "Eaten" or "Tossed".
+    d.count = Math.max(Math.min(1, d.count), Math.round((d.count + delta) * 100) / 100);
+    const b = this.shadowRoot.getElementById("countn");
+    if (b) {
+      b.textContent = d.count;
+      const minus = b.previousElementSibling;
+      if (minus) minus.disabled = d.count <= 1;
+    }
+    clearTimeout(this._countTimer);
+    this._countTimer = setTimeout(() => this._flushCount(), 900);
+  }
+
+  _flushCount() {
+    clearTimeout(this._countTimer);
+    const d = this._dlg;
+    if (!d || d.count == null) return;
+    const id = d.countId, to = d.count, from = d.countFrom;
+    d.count = null; d.countId = null;
+    const it = this._item(id);
+    if (!it || to === from) return;
+    this._ws("update_item", { item_id: id, changes: { amount: to } })
+      .then(() => this._toast(`${it.name}: ${fmtAmount(to, "each")}`, {
+        action: "Undo", onAction: () => this._ws("update_item", { item_id: id, changes: { amount: from } }).catch(() => {}),
+      }))
+      .catch((err) => this._toast(err.message || String(err), { bad: true }));
+  }
+
+  _stepLeft(delta) {
+    const d = this._dlg;
+    const input = this.shadowRoot.getElementById("left");
+    if (!d || !input) return;
+    d.left = Math.max(0, Math.round((Number(input.value) + delta) * 100) / 100);
+    this._renderDlg();
   }
 
   async _run(fn) {

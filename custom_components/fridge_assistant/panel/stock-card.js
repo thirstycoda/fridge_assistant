@@ -646,9 +646,9 @@ class FridgeAssistantStockCard extends HTMLElement {
           return `<div class="use"><div class="use-when">${esc(when(s.date, slot))}</div>
             <div class="use-meal">${esc(meal)}</div><div class="use-qty">${esc(qty(s))}</div></div>`;
         }).join("");
-        if (g.unit && g.need) {
-          body += `<div class="uses-sum">${esc(fmtAmount(g.need, g.unit))} in all this week${g.short > 0
-            ? ` · <b>${esc(fmtAmount(g.short, g.unit))} short</b>` : ""}</div>`;
+        // Only worth saying when there isn't enough.
+        if (g.unit && g.short > 0) {
+          body += `<div class="uses-sum"><b>${esc(fmtAmount(g.short, g.unit))} short</b></div>`;
         }
       }
     }

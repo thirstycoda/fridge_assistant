@@ -120,12 +120,13 @@ function loadZXing() {
 const STYLE = `
   :host { --r: 14px; }
   [hidden] { display: none !important; }
-  /* Laid out like the Plan tab: a header card, then a card per aisle. Room
-   * at the bottom so the floating buttons don't sit on the last row. */
-  :host { display: block; padding-bottom: 76px; }
-  ha-card.bar { padding: 16px; margin-bottom: 12px; }
-  ha-card.aisle { padding: 10px 16px 4px; margin-bottom: 12px; }
-  ha-card.aisle .row:last-child { border-bottom: none; }
+  /* No cards: the title, search and aisle sections sit on the page itself
+   * (aisle headings and row dividers do the separating). Room at the bottom
+   * so the floating buttons don't sit on the last row. */
+  :host { display: block; padding: 4px 4px 76px; }
+  .bar { padding: 4px 0 0; }
+  .aisle { margin-top: 20px; }
+  .aisle .row:last-child { border-bottom: none; }
   button { font: inherit; cursor: pointer; color: var(--primary-text-color); background: none; border: none; padding: 0; }
   button:disabled { opacity: .45; cursor: default; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 12px;
@@ -375,11 +376,11 @@ class FridgeAssistantStockCard extends HTMLElement {
   _build() {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = `<style>${STYLE}</style>
-      <ha-card class="bar">
+      <div class="bar">
         <div class="head" id="head"></div>
         <div class="search"><ha-icon icon="mdi:magnify"></ha-icon>
           <input id="q" type="search" placeholder="Search" autocomplete="off" enterkeyhint="search"></div>
-      </ha-card>
+      </div>
       <div id="list"></div>
       <div class="toast" id="toast" popover="manual"></div>
       <div class="fabs" id="fabs" popover="manual">
@@ -438,8 +439,8 @@ class FridgeAssistantStockCard extends HTMLElement {
     box.innerHTML = AISLES.map((a) => {
       const these = groups.filter((g) => g.aisle === a).sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: "base" }));
       if (!these.length) return "";
-      return `<ha-card class="aisle"><div class="aisle-h" style="--tint:${a.color}"><span>${a.emoji}</span>${esc(a.name)}</div>
-        <div class="list">${these.map((g) => this._rowHtml(g)).join("")}</div></ha-card>`;
+      return `<section class="aisle"><div class="aisle-h" style="--tint:${a.color}"><span>${a.emoji}</span>${esc(a.name)}</div>
+        <div class="list">${these.map((g) => this._rowHtml(g)).join("")}</div></section>`;
     }).join("");
   }
 

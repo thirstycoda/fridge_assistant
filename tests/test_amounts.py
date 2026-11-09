@@ -440,3 +440,11 @@ class TestOneTotal(unittest.TestCase):
         item = self.add("Plain flour")
         self.store.update_item(item["id"], {"amount": 0.5, "amount_unit": "kg"})
         self.assertEqual((item["amount"], item["amount_unit"]), (500, "g"))
+
+    def test_new_unit_resets_the_full_mark(self):
+        bread = self.store.upsert_user_template({"name": "Bread", "category": "bread_bakery", "amount_unit": "slice", "pack_amount": 18})
+        item = self.add("Bread")
+        self.store.update_item(item["id"], {"amount": 6, "amount_unit": "each"})
+        self.assertEqual((item["amount"], item["amount_initial"]), (6, 6))
+        self.store.update_item(item["id"], {"amount": 4})
+        self.assertEqual(item["amount_initial"], 6)

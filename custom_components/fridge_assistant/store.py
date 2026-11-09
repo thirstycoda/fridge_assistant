@@ -745,6 +745,7 @@ class FridgeStore:
                     conv = None
                 if conv is not None:
                     changes["amount"], changes["amount_unit"] = conv, target
+        unit_before = normalize_unit(item.get("amount_unit")) if item.get("amount_unit") else None
         allowed = {
             "name",
             "contents",
@@ -789,6 +790,11 @@ class FridgeStore:
                     item["amount_initial"] = value
                 item["amount_checked_at"] = dt_util.now().isoformat()
             item[key] = value
+        # Counted in a new unit (slices -> pieces): the old full mark means
+        # nothing any more, so the amount given is the new one.
+        if (changes.get("amount_unit") and item.get("amount") is not None
+                and normalize_unit(changes["amount_unit"]) != unit_before):
+            item["amount_initial"] = item["amount"]
         item.pop("quantity", None)
         # Linking an item to a template that knows its pack size starts tracking it.
         if "template_id" in changes and item.get("amount") is None:

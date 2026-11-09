@@ -265,11 +265,11 @@ location: pantry   # cupboard | fridge | freezer | pantry
 title: Pantry      # optional
 ```
 
-- **Tap a food** for **Eaten** (asks how much is left; 0 finishes it),
-  **Tossed**, **Print label** (pick which portions) and **Add another**, then
-  its date, its **Total** (how much there is, in g/kg, ml/l, or portions for
-  things bought loose like oranges or potatoes; a cooked dish shows its
-  labelled portions instead) and where to move it.
+- **Tap a food** for **How many** / **How much** there is first (+ and − for
+  things counted in pieces like oranges or sausage rolls, a number in g/kg or
+  ml/l otherwise; a dish split into labelled tubs shows its portions), then
+  **Eaten** (finishes it, with Undo), **Tossed**, **Print label** (pick which
+  portions) and **Add another**, its date and where to move it.
 - **Scan** (barcode icon) a shop barcode or one of your labels: something in stock opens its
   popup (the one that runs out first); a new product opens an add form filled
   in from the barcode. The number can be typed if the camera can't read it.

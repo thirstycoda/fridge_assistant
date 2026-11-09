@@ -187,6 +187,20 @@ const STYLE = `
   .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
   .acts .btn { padding: 14px 10px; flex-direction: column; gap: 4px; border-radius: 16px; }
   .acts .btn ha-icon { --mdc-icon-size: 24px; }
+  .acts.one { grid-template-columns: 1fr; margin-top: 12px; }
+  .acts.one .btn { flex-direction: row; gap: 8px; padding: 14px; font-size: 16px; }
+  .minor { display: flex; justify-content: center; flex-wrap: wrap; gap: 2px; margin-top: 6px; }
+  .minor button { display: inline-flex; align-items: center; gap: 4px; padding: 8px 10px; border-radius: 10px;
+    background: none; border: none; color: var(--secondary-text-color); font: inherit; font-size: 13px; cursor: pointer; }
+  .minor button ha-icon { --mdc-icon-size: 18px; }
+  .minor button:disabled { opacity: .5; }
+  .hero { margin-top: 14px; padding: 12px 14px 14px; border-radius: 16px; background: var(--secondary-background-color); text-align: center; }
+  .hero-lbl { font-size: 13px; color: var(--secondary-text-color); margin-bottom: 4px; }
+  .hero .step.big { padding: 0; }
+  .hero .step button { background: var(--card-background-color); }
+  .total.big { justify-content: center; gap: 8px; }
+  .total.big input { width: 130px; font-size: 28px; padding: 8px 10px; text-align: center; }
+  .total.big select { font-size: 16px; padding: 10px; }
   .facts { margin-top: 18px; border-top: 1px solid var(--divider-color); }
   .fact { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--divider-color); min-height: 40px; }
   .fact > span { flex: 1 1 auto; color: var(--secondary-text-color); }
@@ -568,8 +582,10 @@ class FridgeAssistantStockCard extends HTMLElement {
     const ports = portionsOf(it);
     const open = openPortions(it);
     const multi = ports.length > 1;
+    // The main view's counter already says how many; don't repeat it.
+    const counted = !d.sub && it.amount != null && (it.amount_unit || "each") === "each" && !multi;
     const amountLine = [
-      it.amount != null ? (it.amount_initial && it.amount_initial !== it.amount
+      it.amount != null && !counted ? (it.amount_initial && it.amount_initial !== it.amount
         ? `${fmtAmount(it.amount, it.amount_unit)} of ${fmtAmount(it.amount_initial, it.amount_unit)} left`
         : `${fmtAmount(it.amount, it.amount_unit)}${it.amount_unit && it.amount_unit !== "each" ? "" : " left"}`) : "",
       multi ? `${open.length} of ${ports.length} portions` : "",
@@ -629,19 +645,25 @@ class FridgeAssistantStockCard extends HTMLElement {
           <button class="btn primary" data-act="doprint" ${busy}>Print</button></div>`;
     }
     const consumed = ports.length - open.length;
-    return `${head}
-      <div class="acts">
-        <button class="btn primary" data-act="eat" ${busy}><ha-icon icon="mdi:silverware-fork-knife"></ha-icon>Eaten</button>
-        <button class="btn" data-act="toss" ${busy}><ha-icon icon="mdi:delete-outline"></ha-icon>Tossed</button>
-        <button class="btn" data-act="print" ${busy}><ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>
-        <button class="btn" data-act="another" ${busy}><ha-icon icon="mdi:plus"></ha-icon>Add another</button>
-      </div>
-      <div class="facts">
-        ${multi || (it.kind === "dish" && it.amount == null) ? `<div class="fact"><span>Portions</span><div class="step">
+    // How many / how much leads: it's the control used most. Eaten stays a
+    // big button; the rarer actions sit quietly underneath.
+    const count = multi || (it.kind === "dish" && it.amount == null)
+      ? `<div class="hero"><div class="hero-lbl">Portions</div><div class="step big">
           <button data-act="pminus" aria-label="Fewer portions" ${ports.length <= Math.max(1, consumed + (open.length ? 1 : 0)) || this._busy ? "disabled" : ""}><ha-icon icon="mdi:minus"></ha-icon></button>
           <b>${ports.length}</b>
           <button data-act="pplus" aria-label="More portions" ${ports.length >= 24 || this._busy ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon></button></div></div>`
-          : this._totalHtml(it, busy)}
+      : this._totalHtml(it, busy);
+    return `${head}
+      ${count}
+      <div class="acts one">
+        <button class="btn primary" data-act="eat" ${busy}><ha-icon icon="mdi:silverware-fork-knife"></ha-icon>Eaten</button>
+      </div>
+      <div class="minor">
+        <button data-act="toss" ${busy}><ha-icon icon="mdi:delete-outline"></ha-icon>Tossed</button>
+        <button data-act="print" ${busy}><ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>
+        <button data-act="another" ${busy}><ha-icon icon="mdi:plus"></ha-icon>Add another</button>
+      </div>
+      <div class="facts">
         <div class="fact"><span>Expires</span>${it.days_left != null && sib.length < 2
           ? `<small class="days ${esc(it.status || "")}">${esc(daysText(it.days_left))}</small>` : ""}
           <input id="exp" type="date" value="${esc(it.expiry_date || "")}" ${busy} aria-label="Expiry date"></div>
@@ -659,7 +681,7 @@ class FridgeAssistantStockCard extends HTMLElement {
       // Counted in pieces: + and − (saved a moment after the last tap).
       const d = this._dlg;
       const n = d && d.count != null && d.countId === it.id ? d.count : Math.round(it.amount * 100) / 100;
-      return `<div class="fact"><span>How many</span><div class="step">
+      return `<div class="hero"><div class="hero-lbl">How many</div><div class="step big">
         <button data-act="cminus" aria-label="One fewer" ${n <= 1 || this._busy ? "disabled" : ""}><ha-icon icon="mdi:minus"></ha-icon></button>
         <b id="countn">${esc(n)}</b>
         <button data-act="cplus" aria-label="One more" ${this._busy ? "disabled" : ""}><ha-icon icon="mdi:plus"></ha-icon></button></div></div>`;
@@ -671,7 +693,7 @@ class FridgeAssistantStockCard extends HTMLElement {
     if ((unit === "g" || unit === "ml") && it.amount >= 1000) { shown = unit === "g" ? "kg" : "l"; value = it.amount / 1000; }
     if (value !== "") value = Math.round(value * 100) / 100;
     const label = (u) => (u === "each" ? "pieces" : u);
-    return `<div class="fact"><span>Total</span><div class="total">
+    return `<div class="hero"><div class="hero-lbl">How much</div><div class="total big">
       <input id="total" type="number" inputmode="decimal" min="0" step="any" value="${esc(value)}" ${busy} aria-label="Total">
       <select id="totalunit" aria-label="Unit" data-unit="${shown || "each"}" ${busy}>${units.map((u) =>
         `<option value="${u}"${u === (shown || "each") ? " selected" : ""}>${label(u)}</option>`).join("")}</select></div></div>`;

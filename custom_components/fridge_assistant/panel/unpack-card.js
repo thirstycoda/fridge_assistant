@@ -645,8 +645,9 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = `
       <style>
-        /* Room at the bottom so the floating buttons don't sit on the last line. */
-        ha-card { padding: 16px 16px 88px; }
+        /* No card around it (like the stock tabs): the list sits on the page.
+         * Room at the bottom so the floating buttons don't sit on the last line. */
+        ha-card { padding: 4px 4px 76px; background: none; border: none; box-shadow: none; }
         .fabs { display: none; position: fixed; margin: 0; padding: 0; border: none; background: transparent; overflow: visible;
           inset: auto calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) auto;
           align-items: center; gap: 12px; }

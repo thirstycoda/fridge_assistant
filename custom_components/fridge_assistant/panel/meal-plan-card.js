@@ -1136,7 +1136,8 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = `
       <style>
-        ha-card { padding: 16px; }
+        /* No card around it (like the stock tabs): the list sits on the page. */
+        ha-card { padding: 4px; background: none; border: none; box-shadow: none; }
         .head { display: flex; align-items: center; gap: 8px; }
         .title { font-size: 20px; font-weight: 600; flex: 1 1 auto; }
         .sub { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }

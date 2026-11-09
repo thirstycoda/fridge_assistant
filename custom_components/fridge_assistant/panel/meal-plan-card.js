@@ -602,7 +602,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       const entry = this._entries().find((e) => String(e.mealplan_id) === id);
       if (!entry) return;
       if (btn.dataset.act === "toggle") { this._open = this._open === id ? null : id; this._render(); }
-      else if (btn.dataset.act === "open") window.open(this._recipeUrl(entry.recipe), "_blank", "noopener");
+      // Straight into Mealie's cook mode (?cook=true; older Mealie ignores it).
+      else if (btn.dataset.act === "open") window.open(`${this._recipeUrl(entry.recipe)}?cook=true`, "_blank", "noopener");
       else if (btn.dataset.act === "made") this._madeIt(entry);
       else if (btn.dataset.act === "eaten") this._eaten(entry);
       else if (btn.dataset.act === "label") {

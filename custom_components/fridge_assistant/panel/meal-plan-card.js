@@ -980,18 +980,31 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     }
   }
 
+  /* Move the line straight away and tell Fridge Assistant behind it; if
+   * that fails the line goes back where it was. */
   async _mark(group, state) {
+    const before = this._marks[group.key];
+    const sticky = state === "have" && !group.unit;
+    const marks = { ...this._marks };
+    if (state) marks[group.key] = { state, at: new Date().toISOString(), sticky };
+    else delete marks[group.key];
+    this._marks = marks;
+    this._open = null;
+    this._render();
+    const seq = (this._markSeq = (this._markSeq || 0) + 1);
     try {
       const res = await this._hass.callWS({
-        type: "fridge_assistant/set_shopping_mark", key: group.key, state,
-        sticky: state === "have" && !group.unit,
+        type: "fridge_assistant/set_shopping_mark", key: group.key, state, sticky,
       });
-      this._marks = res.marks || {};
-      this._open = null;
+      // A later tap's answer wins over an earlier one.
+      if (seq === this._markSeq) { this._marks = res.marks || this._marks; this._render(); }
     } catch (err) {
-      this._error = err.message || String(err);
+      const back = { ...this._marks };
+      if (before) back[group.key] = before; else delete back[group.key];
+      this._marks = back;
+      this._error = `Couldn't save that: ${err.message || err}`;
+      this._render();
     }
-    this._render();
   }
 
   /* When the last delivery was put away (the latest line ticked off on the

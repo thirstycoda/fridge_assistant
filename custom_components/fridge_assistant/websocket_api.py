@@ -825,7 +825,9 @@ async def ws_set_shopping_mark(hass, connection, msg) -> None:
     if runtime is None:
         return
     mark = runtime.store.set_shopping_mark(msg["key"], msg["state"], msg["sticky"])
-    await runtime.store.async_save()
+    # Writing the whole store took long enough to make the button feel stuck;
+    # a tick is saved a moment later instead.
+    runtime.store.schedule_save()
     connection.send_result(msg["id"], {"key": msg["key"], "mark": mark, "marks": runtime.store.shopping_marks_now()})
 
 

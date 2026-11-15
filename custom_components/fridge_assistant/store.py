@@ -304,17 +304,24 @@ class FridgeStore:
             result[tpl["id"]] = tpl
         return result
 
+    def _data(self) -> dict[str, Any]:
+        return {
+            "items": list(self.items.values()),
+            "user_templates": list(self.user_templates.values()),
+            "hidden": list(self.hidden),
+            "history": self.history,
+            "shopping_marks": self.shopping_marks,
+            "meal_labels": self.meal_labels,
+        }
+
     async def async_save(self) -> None:
-        await self._store.async_save(
-            {
-                "items": list(self.items.values()),
-                "user_templates": list(self.user_templates.values()),
-                "hidden": list(self.hidden),
-                "history": self.history,
-                "shopping_marks": self.shopping_marks,
-                "meal_labels": self.meal_labels,
-            }
-        )
+        await self._store.async_save(self._data())
+
+    def schedule_save(self, delay: float = 2.0) -> None:
+        """Save shortly, in the background (several quick changes, one
+        write); for small changes a reply shouldn't wait on, like a
+        shopping list tick."""
+        self._store.async_delay_save(self._data, delay)
 
     # ---- templates --------------------------------------------------------
 

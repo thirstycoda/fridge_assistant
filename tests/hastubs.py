@@ -61,6 +61,9 @@ def install_stubs() -> None:
         async def async_save(self, data):
             self.saved = data
 
+        def async_delay_save(self, data_func, delay=0):
+            self.saved = data_func()
+
     storage.Store = Store
 
     aiohttp_client = _register("homeassistant.helpers.aiohttp_client")

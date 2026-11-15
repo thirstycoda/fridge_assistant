@@ -1286,7 +1286,20 @@ class FridgeStore:
             template = templates.get(key)
             items = ([i for i in self.items.values() if i.get("template_id") == template["id"]]
                      if template else [])
-            group["in_stock"] = bool(items)
+            loose: list[dict[str, Any]] = []
+            if template is None:
+                # A food Fridge Assistant has no template for can still be in
+                # stock under a product name ("brown rice" in "Biona Organic
+                # Short Grain Italian Brown Rice"): every word of the food in
+                # the item's name or contents.
+                want = {_stem(t) for t in _tokens(group["sources"][0]["food"] if group["sources"] else group["name"])}
+                if want:
+                    for item in self.items.values():
+                        have = _stems(_tokens(f"{item.get('name') or ''} {item.get('contents') or ''}"))
+                        if want <= have:
+                            loose.append(item)
+            group["in_stock"] = bool(items or loose)
+            group["found"] = [i.get("name") for i in loose][:3]
             stock = None
             if template is not None and group["unit"]:
                 stock = 0.0
@@ -1311,7 +1324,8 @@ class FridgeStore:
                                  else (LOCATION_CUPBOARD if group["spoons"] else None))
             group["pack_amount"] = (template or {}).get("pack_amount")
             group["per"] = sorted(((template or {}).get("per") or {}).keys())
-            group["check"] = self._check_reasons(template, items, group) if template and items else []
+            group["check"] = (self._check_reasons(template, items, group) if template and items
+                              else ["untracked"] if loose else [])
             # For showing it: the template's category and emoji, and a photo
             # of the product we last had (an item in stock, else history).
             group["category"] = (template or {}).get("category")

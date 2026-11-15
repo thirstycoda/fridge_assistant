@@ -448,3 +448,20 @@ class TestOneTotal(unittest.TestCase):
         self.assertEqual((item["amount"], item["amount_initial"]), (6, 6))
         self.store.update_item(item["id"], {"amount": 4})
         self.assertEqual(item["amount_initial"], 6)
+
+
+class TestShoppingLooseStock(unittest.TestCase):
+    """A recipe food with no template is found in stock by its product name."""
+
+    def setUp(self):
+        self.store = make_store()
+
+    def test_untracked_food_found_by_name(self):
+        self.store.add_item(self.store.build_item({"name": "Biona Organic Short Grain Italian Brown Rice", "location": "cupboard"}))
+        groups = self.store.stock_check([{"food": "zorblax brown rice", "quantity": 300, "unit": "g", "source": "x"}])
+        self.assertFalse(groups[0]["in_stock"])
+        groups = self.store.stock_check([{"food": "short grain brown rice", "quantity": 300, "unit": "g", "source": "x"}])
+        g = groups[0]
+        if not g["tracked"]:
+            self.assertTrue(g["in_stock"])
+            self.assertEqual(g["check"], ["untracked"])

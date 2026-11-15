@@ -699,6 +699,7 @@ const CHECK_TEXT = {
   everyday: "used day to day too",
   tight: "only just enough",
   stale: "not checked for a month",
+  units: "the recipe's amount doesn't convert to what's kept",
 };
 function checkText(g) {
   const parts = (g.check || []).map((r) => CHECK_TEXT[r] || r);
@@ -721,7 +722,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
   setConfig(config) {
     this._config = {
       todo_entity: "todo.planned_meals", ignore: ["water"], title: "Shopping",
-      week_start: "saturday", plan_day: "thursday", ...config,
+      week_start: "saturday", plan_day: "thursday", unpack_todo: "todo.ocado_delivery", ...config,
     };
     this._offset = this._offset || 0;
     this._groups = this._groups || null;
@@ -857,6 +858,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       for (const e of plan) await add(e, false);
       this._reservedMeals = before.filter((e) => e.recipe && !this._done.has(String(e.mealplan_id))).length;
       this._lines = lines;
+      this._delivered = await this._lastUnpacked();
       this._warnings = warnings;
       this._mealCount = meals.length;
       await this._restock(true);
@@ -874,7 +876,11 @@ class FridgeAssistantShoppingCard extends HTMLElement {
   async _restock(throwErrors = false) {
     if (!this._lines || !this._hass) return;
     try {
-      const res = await this._hass.callWS({ type: "fridge_assistant/stock_check", lines: this._lines });
+      const [res, delivered] = await Promise.all([
+        this._hass.callWS({ type: "fridge_assistant/stock_check", lines: this._lines }),
+        this._lastUnpacked(),   // putting a delivery away retires its "Added" marks
+      ]);
+      this._delivered = delivered;
       this._groups = res.groups;
       this._marks = res.marks || {};
       if (!throwErrors) this._render();
@@ -988,34 +994,67 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     this._render();
   }
 
+  /* When the last delivery was put away (the latest line ticked off on the
+   * unpack list), or 0. "Added" marks from before then were for that
+   * delivery: it's arrived, so stock speaks for itself again. */
+  async _lastUnpacked() {
+    if (!this._config.unpack_todo) return 0;
+    try {
+      const res = await this._hass.callWS({ type: "todo/item/list", entity_id: this._config.unpack_todo });
+      let last = 0;
+      for (const t of (res && res.items) || []) {
+        const at = t.completed ? Date.parse(t.completed) : 0;
+        if (at > last) last = at;
+      }
+      return last;
+    } catch (e) { return 0; }
+  }
+
+  /* A mark still in force: an "Added" from before the last delivery lapses. */
+  _markFor(key) {
+    const m = this._marks[key];
+    if (m && m.state === "added" && this._delivered && Date.parse(m.at) < this._delivered) return null;
+    return m;
+  }
+
   /* Split every group into its Need / Added / Have rows. */
   _rows() {
     const need = []; const check = []; const have = []; const added = [];
     for (const g of this._groups || []) {
-      const mark = this._marks[g.key];
+      const mark = this._markFor(g.key);
       const other = Object.entries(g.other || {}).map(([u, q]) => amountText(q, u)).filter(Boolean);
       const measured = Boolean(g.unit) && (g.need > 0 || other.length > 0);
       let missing = "";     // what to get ("" = nothing)
       let covered = "";     // what stock covers ("" = nothing)
+      let units = false;   // stock there, but the recipe's amount doesn't convert
       if (!g.tracked) {
-        // Not in Fridge Assistant (spices, say): always to get unless marked.
-        missing = other.join(" + ") || "to taste";
+        // No food for it in Fridge Assistant: in stock if a product's name
+        // has it ("brown rice" in "Biona … Brown Rice"), else to get.
+        if (g.in_stock) covered = g.found && g.found.length ? `in stock (${g.found.join(", ")})` : "in stock";
+        else missing = other.join(" + ") || "to taste";
       } else if (!measured) {
         // Known food without amounts (or only "to taste"): stock or not.
         if (g.in_stock || (g.stock || 0) > 0) covered = "in stock"; else missing = other.join(" + ") || "some";
       } else {
         const parts = [];
         if (g.short > 0) parts.push(amountText(g.short, g.unit));
-        parts.push(...other);
+        // Amounts that don't convert (80 g of a food kept in pieces): with
+        // some in stock that's one to check, not one to buy.
+        if (other.length && (g.stock || 0) > 0) units = true;
+        else parts.push(...other);
         missing = parts.join(" + ");
         if (g.have > 0) covered = amountText(g.have, g.unit);
+        if (units) covered = [covered, `${other.join(" + ")} (have ${amountText(g.stock, g.unit)})`].filter(Boolean).join(" + ");
       }
       const total = [g.unit && g.need ? amountText(g.need, g.unit) : "", ...other].filter(Boolean).join(" + ")
         || (g.to_taste ? "to taste" : "");
       const stock = g.stock != null ? amountText(g.stock, g.unit) || "none" : "";
       if (mark && mark.state === "have") { have.push({ g, text: total, marked: true, stock }); continue; }
       if (missing) (mark && mark.state === "added" ? added : need).push({ g, text: missing, stock });
-      if (covered) (g.check && g.check.length ? check : have).push({ g, text: covered, stock });
+      if (covered) {
+        const gg = units ? { ...g, check: [...(g.check || []), "units"] } : g;
+        ((gg.check && gg.check.length) ? check : have).push({ g: gg, text: covered, stock });
+      }
     }
     return { need, check, have, added };
   }

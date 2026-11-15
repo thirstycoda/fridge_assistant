@@ -277,26 +277,39 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     this.shadowRoot.getElementById("sel").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
+  /* Which order line a scanned product is. Lines of the same food (by
+   * Fridge Assistant's matching) are the candidates, else every line; the
+   * one sharing most of the product's words wins. Returns {line, sure}:
+   * sure only when the words agree (at least half of them), so a weak or
+   * food-only match ("tofu" for a different tofu) is offered as a guess
+   * instead of being put away against the wrong line. */
   async _bestLine(name) {
     if (!name || !this._lines.length) return null;
-    const res = await this._match(name);
-    const tplId = res && res.template && res.template.id;
-    if (tplId) {
-      const results = await Promise.all(this._lines.map((l) => this._match(l.name)));
-      const same = this._lines.filter((l, i) => results[i] && results[i].template && results[i].template.id === tplId);
-      if (same.length) return same[0];
-    }
     const want = new Set(tokens(name));
-    if (!want.size) return null;
-    let best = null, bestScore = 0;
-    for (const l of this._lines) {
+    const score = (l) => {
+      if (!want.size) return 0;
       const have = new Set(tokens(l.name));
       let shared = 0;
       want.forEach((w) => { if (have.has(w)) shared += 1; });
-      const score = shared / Math.max(want.size, 1);
-      if (shared && score > bestScore) { best = l; bestScore = score; }
+      return shared / want.size;
+    };
+    const res = await this._match(name);
+    const tplId = res && res.template && res.template.id;
+    let pool = this._lines.filter((l) => l.qty > 0);
+    if (!pool.length) pool = this._lines;
+    let sameFood = [];
+    if (tplId) {
+      const results = await Promise.all(pool.map((l) => this._match(l.name)));
+      sameFood = pool.filter((l, i) => results[i] && results[i].template && results[i].template.id === tplId);
     }
-    return bestScore >= 0.5 ? best : null;
+    const ranked = (sameFood.length ? sameFood : pool)
+      .map((l) => ({ line: l, s: score(l) }))
+      .sort((a, b) => b.s - a.s);
+    const best = ranked[0];
+    if (!best || (!sameFood.length && best.s === 0)) return null;
+    // Two lines of the same food scoring alike: can't tell which.
+    const tie = ranked[1] && ranked[1].s === best.s;
+    return { line: best.line, sure: best.s >= 0.5 && !tie };
   }
 
   async _onBarcode(raw, fromCamera = false) {
@@ -310,8 +323,15 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const known = res && res.known;
     const product = (res && res.product) || null;
     const name = (known && known.name) || (product && product.name) || null;
-    const line = await this._bestLine(name) || (product && product.brand
-      ? await this._bestLine(`${product.brand} ${product.name}`) : null);
+    let found = await this._bestLine(name);
+    if ((!found || !found.sure) && product && product.brand) {
+      const alt = await this._bestLine(`${product.brand} ${product.name}`);
+      if (alt && (!found || alt.sure)) found = alt;
+    }
+    // Only a sure match is put away against its line straight off; a guess
+    // is pre-chosen in the line picker but has to be confirmed.
+    const line = found && found.sure ? found.line : null;
+    const guess = found && !found.sure ? found.line : null;
     const sel = {
       line,
       barcode: code,
@@ -326,6 +346,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       suggested: null,
       fromCamera,
       pickChosen: !!line,
+      guess,
     };
     this._sel = sel;
     if (line) {
@@ -337,6 +358,7 @@ class FridgeAssistantUnpackCard extends HTMLElement {
       this._openSheet("sel");
       this._status(!this._lines.length
         ? (name ? "Not on the list — pick where it goes." : `Barcode ${code} isn't known and there's nothing on the list to match it to.`)
+        : guess ? `Is it “${guess.name}”? Check its line, then where it goes.`
         : name ? "Not matched to a line — pick its line, then where it goes."
           : `Barcode ${code} isn't known yet — pick its line, then where it goes.`);
     }
@@ -894,16 +916,20 @@ class FridgeAssistantUnpackCard extends HTMLElement {
     const p = sel.product;
     const line = sel.line;
     const open = !line || line.qty > 0;
-    const title = line ? line.name : (p ? p.name : `Barcode ${sel.barcode}`);
+    // Lead with what was scanned; the line it counts against comes second,
+    // so a wrong line is easy to spot.
+    const title = p ? p.name : line ? line.name : `Barcode ${sel.barcode}`;
     const subParts = [];
-    if (p && line && p.name !== line.name) subParts.push(`Scanned: ${p.name}`);
+    if (p && line && p.name !== line.name) subParts.push(`For: ${line.name}`);
     if (!line) subParts.push(this._lines.length ? "Not matched to a line" : "Not on the list");
     if (line && line.info.ordered) subParts.push(`Substitute for ${line.info.ordered}`);
     if (line && !open) subParts.push("All put away");
     // An unmatched scan starts with nothing picked, so a place can't be pressed
     // until its line (or "not on the list") is chosen.
     const unpicked = !line && !sel.pickChosen;
+    const guess = !line && sel.guess ? sel.guess : null;
     const options = (unpicked ? [`<option value="" disabled selected>Choose its line…</option>`] : [])
+      .concat(guess ? [`<option value="${esc(guess.uid)}">Best guess: ${esc(guess.summary)}</option>`] : [])
       .concat([`<option value="__none__"${!line && !unpicked ? " selected" : ""}>— not on the list —</option>`])
       .concat(this._lines.map((l) => `<option value="${esc(l.uid)}"${line && l.uid === line.uid ? " selected" : ""}>${esc(l.summary)}</option>`))
       .join("");

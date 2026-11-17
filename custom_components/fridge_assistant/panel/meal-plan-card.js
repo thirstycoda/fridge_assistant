@@ -2007,13 +2007,15 @@ class FridgeAssistantWeekPlanCard extends HTMLElement {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = `
       <style>
-        :host { display: block; }
+        /* One day under another on any screen (a landscape tablet too), kept
+         * to a readable width on wide ones. */
+        :host { display: block; max-width: 760px; margin: 0 auto; }
         ha-card.bar { padding: 16px; margin-bottom: 12px; }
         .head { display: flex; align-items: center; gap: 8px; }
         .title { font-size: 20px; font-weight: 600; flex: 1 1 auto; }
         .sub { color: var(--secondary-text-color); font-size: 14px; margin-top: 2px; }
         .refresh { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; padding: 6px; }
-        .days { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+        .days { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
         .days > .past { opacity: .6; }
         .empty { padding: 4px 16px 16px; color: var(--secondary-text-color); }
         .more { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }

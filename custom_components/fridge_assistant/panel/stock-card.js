@@ -567,21 +567,21 @@ class FridgeAssistantStockCard extends HTMLElement {
     const cfg = this._config;
     const week = P.shoppingWeek(cfg.week_start, cfg.week_start, 0);
     const plan = await P.fetchPlanRange(this._hass, cfg.mealie_entry, P.isoDate(week.today), P.isoDate(week.end));
-    // Meals already marked made have taken their ingredients.
-    const made = new Set();
+    // Meals already marked made have taken their ingredients, and meals
+    // coming from the freezer won't use any.
+    let records = new Map();
     try {
       const res = await this._hass.callWS({ type: "todo/item/list", entity_id: cfg.todo_entity });
-      for (const t of (res && res.items) || []) {
-        try {
-          const info = JSON.parse(t.description || "{}") || {};
-          if (info.mealplan_id != null && info.done) made.add(String(info.mealplan_id));
-        } catch (e) { /* not one of ours */ }
-      }
+      records = P.planRecords((res && res.items) || []);
     } catch (e) { /* no to-do list: count every meal */ }
+    const sources = P.mealSources(plan, records, (this._state && this._state.items) || [], P.isoDate(new Date()));
     const lines = [];
     const none = new Set();
     for (const e of plan) {
-      if (made.has(String(e.mealplan_id))) continue;
+      const rec = records.get(String(e.mealplan_id));
+      if (rec && rec.info.done) continue;
+      const src = sources.get(String(e.mealplan_id));
+      if (src && src.source === "freezer") continue;
       const tag = (name) => `${name}\u0001${e.entry_type || ""}`;
       if (e.recipe) {
         const recipe = await this._recipe(P, e.recipe.slug);

@@ -119,3 +119,127 @@ export function recipeLines(recipe, source, date, ignore) {
   return out;
 }
 
+
+/* ---- meals from the freezer ------------------------------------------------
+ *
+ * A planned recipe can be cooked fresh or come from a cooked dish already in
+ * the freezer (or fridge). The choice is kept on the meal's line on the
+ * planned meals to-do list ({"mealplan_id", ..., "source": "fresh" |
+ * "freezer"}), where the plan, shopping and stock cards all read it. With no
+ * choice made, a meal comes from the freezer when there's a dish of it there.
+ * One dish portion is one meal; portions go to meals in date order. */
+
+/* The planned meals to-do list's lines by mealplan_id: {uid, summary, info}. */
+export function planRecords(todoItems) {
+  const out = new Map();
+  for (const t of todoItems || []) {
+    let info;
+    try { info = JSON.parse(t.description || "{}") || {}; } catch (e) { continue; }
+    if (info.mealplan_id == null) continue;
+    const key = String(info.mealplan_id);
+    const prev = out.get(key);
+    // A line with a "done" record wins over a stray duplicate.
+    if (!prev || (info.done && !prev.info.done)) out.set(key, { uid: t.uid, summary: t.summary, status: t.status, info });
+  }
+  return out;
+}
+
+const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+/* A cooked dish in the freezer or fridge that is this recipe: named like it,
+ * or labelled "From <recipe>" (when only part of it went in, e.g. the sauce). */
+export function isDishOf(recipe, item) {
+  if (!recipe || !item || item.kind !== "dish" || !["freezer", "fridge"].includes(item.location)) return false;
+  const name = norm(recipe.name);
+  return !!name && (norm(item.name) === name || norm(item.notes).includes(`from ${name}`));
+}
+
+export const openPortions = (item) => (Array.isArray(item.portions) && item.portions.length ? item.portions : [{ n: 1, status: "open" }])
+  .filter((p) => p.status === "open").map((p) => p.n);
+
+const TYPE_ORDER = { breakfast: 0, lunch: 1, dinner: 2 };
+
+/* Where each planned recipe comes from: Map mealplan_id -> {source: "fresh" |
+ * "freezer", choice, can (there's a dish of it to choose), dish, portion
+ * (when the dish has several), left (portions of it left after this one),
+ * missing (chose the freezer, but none is left), done}. Meals before
+ * `todayIso` don't hold on to a portion. */
+export function mealSources(entries, records, items, todayIso) {
+  const dishes = (items || []).filter((i) => i.kind === "dish" && ["freezer", "fridge"].includes(i.location))
+    .sort((a, b) => String(a.expiry_date || "9999").localeCompare(String(b.expiry_date || "9999"))
+      || String(a.added_date || "").localeCompare(String(b.added_date || "")));
+  const left = new Map(dishes.map((d) => [d.id, openPortions(d)]));
+  const out = new Map();
+  const meals = (entries || []).filter((e) => e.recipe).slice().sort((a, b) =>
+    String(a.mealplan_date).localeCompare(String(b.mealplan_date))
+    || (TYPE_ORDER[a.entry_type] ?? 3) - (TYPE_ORDER[b.entry_type] ?? 3));
+  for (const e of meals) {
+    const id = String(e.mealplan_id);
+    const info = (records && records.get(id) && records.get(id).info) || {};
+    const ofIt = dishes.filter((d) => isDishOf(e.recipe, d));
+    if (info.done) {
+      out.set(id, { source: info.done.from === "freezer" ? "freezer" : "fresh", done: true, choice: info.source || null, can: false });
+      continue;
+    }
+    const choice = info.source === "fresh" || info.source === "freezer" ? info.source : null;
+    const avail = ofIt.filter((d) => left.get(d.id).length);
+    const base = { choice, can: avail.length > 0 || choice === "freezer" };
+    if (choice === "fresh" || !avail.length) {
+      out.set(id, { ...base, source: "fresh", missing: choice === "freezer" });
+      continue;
+    }
+    const dish = avail[0];
+    const ports = left.get(dish.id);
+    const portion = ports[0];
+    if (String(e.mealplan_date) >= todayIso) ports.shift();
+    out.set(id, {
+      ...base, source: "freezer", dish,
+      portion: (dish.portions || []).length > 1 ? portion : null,
+      left: avail.reduce((n, d) => n + left.get(d.id).length, 0),
+    });
+  }
+  return out;
+}
+
+/* Record "fresh" / "freezer" for a planned meal on its to-do line (adding the
+ * line when the meal doesn't have one yet). */
+export async function setMealSource(hass, todoEntity, entry, record, source) {
+  const target = { entity_id: todoEntity };
+  if (record) {
+    await hass.callService("todo", "update_item",
+      { item: record.uid, description: JSON.stringify({ ...record.info, source }) }, target);
+    return;
+  }
+  const type = String(entry.entry_type || "meal");
+  const name = entry.recipe ? entry.recipe.name : entry.title;
+  await hass.callService("todo", "add_item", {
+    item: `${type.charAt(0).toUpperCase()}${type.slice(1)}: ${name}`,
+    description: JSON.stringify({
+      mealplan_id: entry.mealplan_id, slug: entry.recipe ? entry.recipe.slug : null, name,
+      entry_type: entry.entry_type || "", date: entry.mealplan_date, source,
+    }),
+  }, target);
+}
+
+/* Fridge Assistant's stock, one subscription shared by every card on the page. */
+let stockSub = null;
+let stockLast = null;
+const stockFns = new Set();
+export function watchStock(hass, fn) {
+  stockFns.add(fn);
+  if (stockLast) fn(stockLast);
+  if (!stockSub) {
+    stockSub = hass.connection.subscribeMessage((msg) => {
+      stockLast = msg;
+      stockFns.forEach((f) => f(msg));
+    }, { type: "fridge_assistant/subscribe" }).catch(() => { stockSub = null; return null; });
+  }
+  return () => {
+    stockFns.delete(fn);
+    if (!stockFns.size && stockSub) {
+      const s = stockSub;
+      stockSub = null; stockLast = null;
+      s.then((u) => u && u()).catch(() => {});
+    }
+  };
+}

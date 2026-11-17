@@ -126,8 +126,10 @@ export function recipeLines(recipe, source, date, ignore) {
  * the freezer (or fridge). The choice is kept on the meal's line on the
  * planned meals to-do list ({"mealplan_id", ..., "source": "fresh" |
  * "freezer"}), where the plan, shopping and stock cards all read it. With no
- * choice made, a meal comes from the freezer when there's a dish of it there.
- * One dish portion is one meal; portions go to meals in date order. */
+ * choice made, a meal comes from the freezer when there's a dish of it there,
+ * otherwise it's cooked. "Freezer" can be picked without a dish in stock (it
+ * just isn't tracked); there's then nothing to take out. One dish portion is
+ * one meal; portions go to meals in date order. */
 
 /* The planned meals to-do list's lines by mealplan_id: {uid, summary, info}. */
 export function planRecords(todoItems) {
@@ -160,10 +162,10 @@ export const openPortions = (item) => (Array.isArray(item.portions) && item.port
 const TYPE_ORDER = { breakfast: 0, lunch: 1, dinner: 2 };
 
 /* Where each planned recipe comes from: Map mealplan_id -> {source: "fresh" |
- * "freezer", choice, can (there's a dish of it to choose), dish, portion
+ * "freezer", choice, can (there's a dish of it in stock), dish, portion
  * (when the dish has several), left (portions of it left after this one),
- * missing (chose the freezer, but none is left), done}. Meals before
- * `todayIso` don't hold on to a portion. */
+ * missing (from the freezer, but no dish of it in stock), done}. Meals
+ * before `todayIso` don't hold on to a portion. */
 export function mealSources(entries, records, items, todayIso) {
   const dishes = (items || []).filter((i) => i.kind === "dish" && ["freezer", "fridge"].includes(i.location))
     .sort((a, b) => String(a.expiry_date || "9999").localeCompare(String(b.expiry_date || "9999"))
@@ -183,9 +185,13 @@ export function mealSources(entries, records, items, todayIso) {
     }
     const choice = info.source === "fresh" || info.source === "freezer" ? info.source : null;
     const avail = ofIt.filter((d) => left.get(d.id).length);
-    const base = { choice, can: avail.length > 0 || choice === "freezer" };
-    if (choice === "fresh" || !avail.length) {
-      out.set(id, { ...base, source: "fresh", missing: choice === "freezer" });
+    const base = { choice, can: avail.length > 0 };
+    if (choice === "fresh" || (!avail.length && choice !== "freezer")) {
+      out.set(id, { ...base, source: "fresh" });
+      continue;
+    }
+    if (!avail.length) {
+      out.set(id, { ...base, source: "freezer", missing: true });
       continue;
     }
     const dish = avail[0];

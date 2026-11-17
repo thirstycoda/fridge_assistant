@@ -31,10 +31,8 @@ export function parseAmount(text) {
  *
  * A note with text is a small meal: the title names it ("Evie's breakfast")
  * and the text lists its ingredients, one per line, written like a recipe
- * line ("30 g oats", "½ banana", "1 tbsp peanut butter"). A note with only a
- * title is one loose ingredient ("Avocado", "40 g cannellini beans"), which
- * counts only in a breakfast, lunch or dinner slot (other notes there are
- * reminders, not food).
+ * line ("30 g oats", "½ banana", "1 tbsp peanut butter"). Only the text is
+ * read: the title is just a name, so a note with no text has no ingredients.
  *
  * Returns {items: [{quantity, unit, food, text}], unreadable: [text]}. A line
  * that reads like a dish rather than one thing ("Pumpkin, walnut and flaxseed
@@ -57,8 +55,6 @@ export function noteItems(entry) {
       if (!a.food || (!a.explicit && dishy)) unreadable.push(line);
       else items.push({ ...a, text: line });
     }
-  } else if (entry.title && ["breakfast", "lunch", "dinner"].includes(entry.entry_type)) {
-    items.push({ ...parseAmount(entry.title), text: entry.title });
   }
   return { items, unreadable };
 }

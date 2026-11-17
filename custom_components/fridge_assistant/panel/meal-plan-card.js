@@ -274,9 +274,9 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     return `${this._config.mealie_url}/g/${encodeURIComponent(this._config.group)}/r/${encodeURIComponent(recipe.slug)}`;
   }
 
-  /* A note on the plan was eaten: take its ingredients (its lines, or the one
-   * loose ingredient in its title, such as "Avocado") out of Fridge Assistant
-   * and record it on the to-do list so the card remembers. */
+  /* A note on the plan was eaten: take its ingredients (the lines of its
+   * text) out of Fridge Assistant and record it on the to-do list so the card
+   * remembers. */
   async _eaten(entry) {
     const id = String(entry.mealplan_id);
     const { items } = noteItems(entry);
@@ -549,7 +549,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .label button.print ha-icon { --mdc-icon-size: 20px; }
         .printed { padding: 0 10px 10px; font-size: 13px; color: var(--secondary-text-color); }
         /* Cook fresh / From the freezer: a small switch, as on the shopping list. */
-        .srcrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 2px; font-size: 14px; }
+        .srcrow { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 0 2px; font-size: 14px; }
         .pick { flex: 0 0 auto; display: inline-flex; gap: 2px; padding: 2px; border-radius: 12px; background: var(--card-background-color); }
         .actions .pick button { flex: none; width: 36px; height: 32px; padding: 0; border: none; border-radius: 10px; background: none;
           color: var(--secondary-text-color); }
@@ -616,7 +616,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
           <div class="name">${esc(entry.title || "")}${sub ? `<small>${esc(sub)}</small>` : ""}</div>
           ${done ? `<ha-icon class="made" icon="mdi:check-circle"></ha-icon>` : ""}
         </button>
-        ${open ? `<div class="actions">
+        ${open && noteItems(entry).items.length ? `<div class="actions">
           <button class="primary" data-act="eaten" data-id="${id}" ${done || busy ? "disabled" : ""}>
             <ha-icon icon="mdi:check"></ha-icon>${busy ? "Taking out…" : "Eaten"}</button>
         </div>` : ""}
@@ -1014,7 +1014,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
           const issues = recipeIssues(recipe);
           if (issues.length && !warnings.some((w) => w.slug === recipe.slug)) warnings.push({ name: recipe.name, slug: recipe.slug, issues });
         } else {
-          // A note: its ingredient lines (or the title, for one loose ingredient).
+          // A note: the ingredient lines in its text (never its title).
           const { items, unreadable } = noteItems(e);
           const name = e.title || "Note";
           // A note with its own ingredient list is a meal; a loose one isn't.

@@ -549,7 +549,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .label button.print ha-icon { --mdc-icon-size: 20px; }
         .printed { padding: 0 10px 10px; font-size: 13px; color: var(--secondary-text-color); }
         /* Cook fresh / From the freezer: a small switch, as on the shopping list. */
-        .srcrow { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 0 2px; font-size: 14px; }
+        .srcrow { display: flex; align-items: center; gap: 10px; padding: 0 2px; font-size: 14px; }
+        .actions .srcrow button.mealie { flex: 0 0 auto; margin-left: auto; padding-inline: 12px; }
         .pick { flex: 0 0 auto; display: inline-flex; gap: 2px; padding: 2px; border-radius: 12px; background: var(--card-background-color); }
         .actions .pick button { flex: none; width: 36px; height: 32px; padding: 0; border: none; border-radius: 10px; background: none;
           color: var(--secondary-text-color); }
@@ -641,11 +642,15 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     const statusCls = !done && frozen ? (src.missing ? "missing" : "frozen") : "";
     const open = this._open === id;
     const switching = this._switching.has(id);
+    const viewBtn = `<button class="mealie" data-act="open" data-id="${id}"><img src="${esc(this._config.mealie_url)}/icons/android-chrome-192x192.png" alt=""
+          onerror="this.style.display='none'">View recipe</button>`;
+    // "Cook fresh" / "From the freezer" and its switch on the left; a meal to
+    // cook has View recipe on the right of the same line.
     const choose = !done ? `<div class="srcrow"><span>${frozen ? "From the freezer" : "Cook fresh"}</span>
         <span class="pick" role="group" aria-label="Cook it or from the freezer">
         ${[["fresh", "Cook fresh", "mdi:chef-hat"], ["freezer", "From the freezer", "mdi:snowflake"]].map(([key, label, icon]) => `<button data-act="src" data-src="${key}" data-id="${id}"
           class="${src.source === key ? "on" : ""}" aria-pressed="${src.source === key}" title="${label}" aria-label="${label}" ${switching || busy ? "disabled" : ""}><ha-icon icon="${icon}"></ha-icon></button>`).join("")}
-        </span></div>` : "";
+        </span>${frozen ? "" : viewBtn}</div>` : "";
     // From the freezer, but the freezer stock doesn't have it: offer to add it.
     const adding = this._addingFz.has(id);
     const askAdd = !done && frozen && !src.can && !this._noAddFz.has(id) ? `<div class="addfz">
@@ -663,8 +668,7 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       </button>
       ${open ? `<div class="actions">
         ${choose}${askAdd}
-        ${frozen && !done ? "" : `<button class="mealie" data-act="open" data-id="${id}"><img src="${esc(this._config.mealie_url)}/icons/android-chrome-192x192.png" alt=""
-          onerror="this.style.display='none'">View recipe</button>`}
+        ${done ? viewBtn : ""}
         <button class="primary${frozen && !done ? " wide" : ""}" data-act="made" data-id="${id}" ${done || busy || switching ? "disabled" : ""}>
           <ha-icon icon="${madeIcon}"></ha-icon>${madeLabel}</button>
         ${frozen && !done ? "" : `<button data-act="label" data-id="${id}" class="${labelOpen ? "on" : ""}" aria-expanded="${labelOpen}">

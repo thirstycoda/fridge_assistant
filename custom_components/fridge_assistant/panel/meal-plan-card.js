@@ -663,8 +663,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       </button>
       ${open ? `<div class="actions">
         ${choose}${askAdd}
-        <button class="mealie" data-act="open" data-id="${id}"><img src="${esc(this._config.mealie_url)}/icons/android-chrome-192x192.png" alt=""
-          onerror="this.style.display='none'">View recipe</button>
+        ${frozen && !done ? "" : `<button class="mealie" data-act="open" data-id="${id}"><img src="${esc(this._config.mealie_url)}/icons/android-chrome-192x192.png" alt=""
+          onerror="this.style.display='none'">View recipe</button>`}
         <button class="primary${frozen && !done ? " wide" : ""}" data-act="made" data-id="${id}" ${done || busy || switching ? "disabled" : ""}>
           <ha-icon icon="${madeIcon}"></ha-icon>${madeLabel}</button>
         ${frozen && !done ? "" : `<button data-act="label" data-id="${id}" class="${labelOpen ? "on" : ""}" aria-expanded="${labelOpen}">
@@ -781,6 +781,8 @@ const URGENT_MS = 2 * 3600 * 1000;
  * lines Mealie couldn't read, and the house rules (romano peppers except in
  * a lasagne; bouillon powder and water instead of vegetable stock). */
 const OTHER_PEPPERS = ["red pepper", "yellow pepper", "green pepper", "orange pepper", "sweet pepper", "bell pepper"];
+const COUNT_UNITS = ["block", "pack", "packet", "can", "tin", "jar", "bunch", "pot", "bottle", "bag", "head", "piece", "slice", "clove"];
+
 function recipeIssues(recipe) {
   const issues = [];
   const lasagna = /lasagn/i.test(recipe.name || "");
@@ -793,6 +795,11 @@ function recipeIssues(recipe) {
     const food = String(i.food.name || "").toLowerCase();
     if (!lasagna && OTHER_PEPPERS.includes(food)) issues.push(`“${food}” — you use romano peppers`);
     if (food === "vegetable stock") issues.push("vegetable stock — you use bouillon powder and water (4 tsp a litre)");
+    // "300g block of tempeh" read as 300 blocks: a weight taken as a count.
+    const unit = String((i.unit && i.unit.name) || "").toLowerCase();
+    if (COUNT_UNITS.includes(unit) && (i.quantity || 0) >= 20) {
+      issues.push(`“${text}” is read as ${i.quantity} ${unit}s of ${food} — give the weight its own unit (e.g. “300 g ${food}”)`);
+    }
   }
   return [...new Set(issues)];
 }
@@ -1279,7 +1286,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .mrow:first-child { border-top: none; }
         .mrow.same { border-top-color: transparent; }
         .mrow .d { flex: 0 0 2.6em; color: var(--secondary-text-color); font-size: 13px; }
-        .mrow .m { flex: 1 1 auto; min-width: 0; }
+        .mrow .m { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
         .mrow .m small { display: block; color: var(--secondary-text-color); font-size: 12px; }
         .mrow .m small.bad { color: var(--warning-color, #c77700); }
         .pick { flex: 0 0 auto; display: inline-flex; gap: 2px; padding: 2px; border-radius: 12px; background: var(--secondary-background-color); }
@@ -1306,8 +1313,10 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .th { width: 36px; height: 36px; flex: 0 0 36px; border-radius: 10px; object-fit: contain; background: #fff; }
         .th.emo { display: flex; align-items: center; justify-content: center; font-size: 20px;
           background: color-mix(in srgb, var(--tint) 20%, transparent); }
-        .line .n { flex: 1 1 auto; }
-        .line .a { color: var(--secondary-text-color); font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .line .n { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+        /* Amounts wrap too ("in stock (Biona Organic …)" can be long). */
+        .line .a { color: var(--secondary-text-color); font-size: 14px; text-align: right; max-width: 45%; overflow-wrap: anywhere;
+          font-variant-numeric: tabular-nums; }
         .sec.added .line .n { color: var(--secondary-text-color); text-decoration: line-through; }
         .sec.added .th, .sec.have .th { opacity: .75; }
         .progress { margin-top: 12px; }
@@ -1322,7 +1331,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .bar span { display: block; height: 100%; background: var(--primary-color); border-radius: 999px; transition: width .3s; }
         .ptext { font-size: 13px; color: var(--secondary-text-color); margin-top: 4px; }
         .detail { padding: 0 2px 12px; }
-        .meals { font-size: 14px; color: var(--secondary-text-color); display: flex; flex-direction: column; gap: 2px; }
+        .meals { font-size: 14px; color: var(--secondary-text-color); display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
         .meals span b { color: var(--primary-text-color); font-weight: 500; }
         .stockline { font-size: 13px; color: var(--secondary-text-color); margin-top: 6px; }
         .btns { display: flex; gap: 8px; margin-top: 10px; }
@@ -1337,7 +1346,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
           background: rgba(255, 152, 0, .12); }
         .warn summary { cursor: pointer; display: flex; align-items: center; gap: 6px; }
         .warn ha-icon { --mdc-icon-size: 18px; color: var(--warning-color, #c77700); }
-        .wrec { margin-top: 8px; }
+        .wrec { margin-top: 8px; overflow-wrap: anywhere; }
         .wrec a { color: var(--primary-color); font-weight: 500; }
         .wrec ul { margin: 4px 0 0; padding-left: 18px; color: var(--secondary-text-color); }
         .haveform { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--secondary-background-color); }
@@ -1632,7 +1641,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         ${this._warnings.length} ${this._warnings.every((w) => w.note) ? "note" : this._warnings.some((w) => w.note) ? "recipe or note" : "recipe"}${this._warnings.length === 1 ? "" : "s"} to tidy in Mealie, so the list is right</summary>
         ${this._warnings.map((w) => `<div class="wrec"><a href="${esc(w.note ? this._plannerLink() : this._recipeLink(w.slug))}" target="_blank" rel="noopener">${esc(w.name)}</a>
           <ul>${w.issues.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`).join("")}</details>` : "";
-    body.innerHTML = head + mealsSec + progress + warn
+    body.innerHTML = head + progress + warn + mealsSec
       + section("need", "Need", need, "Nothing else to get.")
       + section("check", "Check", check, "Nothing to check.")
       + section("have", "Have", have, "Nothing from stock yet.")

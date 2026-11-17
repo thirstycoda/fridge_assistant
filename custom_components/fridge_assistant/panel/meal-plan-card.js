@@ -37,7 +37,7 @@
 
 const {
   parseAmount, noteItems, pad, isoDate, addDays, mealieEntryId, fetchPlanRange, WEEKDAYS, shoppingWeek, recipeLines,
-  planRecords, mealSources, setMealSource, watchStock,
+  planRecords, mealSources, setMealSource, watchStock, addFreezerDish,
 } = await import(new URL(`./lib/plan.js${new URL(import.meta.url).search}`, import.meta.url));
 
 const MAX_PORTIONS = 12;
@@ -163,6 +163,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     this._records = this._records || new Map();
     this._stockItems = this._stockItems || null;
     this._switching = this._switching || new Set();
+    this._addingFz = this._addingFz || new Set();
+    this._noAddFz = this._noAddFz || new Set();
     if (this.shadowRoot) this._render();
   }
 
@@ -385,6 +387,22 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     }
   }
 
+  /* "From the freezer" for a meal the freezer stock doesn't have: put one in. */
+  async _addToFreezer(entry) {
+    const id = String(entry.mealplan_id);
+    if (this._addingFz.has(id)) return;
+    this._addingFz.add(id);
+    this._render();
+    try {
+      await addFreezerDish(this._hass, entry.recipe, this._imageUrl(entry.recipe));
+    } catch (err) {
+      this._error = `Couldn't add it to the freezer: ${err.message || err}`;
+    } finally {
+      this._addingFz.delete(id);
+      this._render();
+    }
+  }
+
   /* Put the cooked meal away as a Fridge Assistant dish (one item with a
    * portion per container) and print a sticker for each portion. */
   async _printLabel(entry) {
@@ -496,9 +514,10 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         .name small { display: block; font-weight: 400; color: var(--secondary-text-color); font-size: 13px; margin-top: 2px; }
         .made { color: var(--success-color, #43a047); --mdc-icon-size: 24px; flex: 0 0 auto; }
         .meal.is-made .name { color: var(--secondary-text-color); }
-        /* Open in Mealie and Made it side by side, Print label underneath. */
+        /* Cook / freezer at the top, View recipe, then Made it and Print label
+         * side by side (they go together when there are leftovers). */
         .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 8px 10px; }
-        .actions button[data-act=label], .actions button:only-child { grid-column: 1 / -1; }
+        .actions button.mealie, .actions button:only-child, .actions .srcrow, .actions .addfz, .actions button.wide { grid-column: 1 / -1; }
         .actions button { flex: 1 1 100px; display: flex; align-items: center; justify-content: center; gap: 6px;
           font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 12px; padding: 10px 8px;
           border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
@@ -529,13 +548,17 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
           font-weight: 500; background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
         .label button.print ha-icon { --mdc-icon-size: 20px; }
         .printed { padding: 0 10px 10px; font-size: 13px; color: var(--secondary-text-color); }
-        /* Cook fresh / From the freezer, across the top of the buttons. */
-        .src { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 3px;
-          border-radius: 12px; background: var(--card-background-color); border: 1px solid var(--divider-color); }
-        .actions .src button { border: none; border-radius: 9px; padding: 8px 6px; background: none; font-weight: 500;
+        /* Cook fresh / From the freezer: a small switch, as on the shopping list. */
+        .srcrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 2px; font-size: 14px; }
+        .pick { flex: 0 0 auto; display: inline-flex; gap: 2px; padding: 2px; border-radius: 12px; background: var(--card-background-color); }
+        .actions .pick button { flex: none; width: 36px; height: 32px; padding: 0; border: none; border-radius: 10px; background: none;
           color: var(--secondary-text-color); }
-        .actions .src ha-icon { --mdc-icon-size: 18px; }
-        .actions .src button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+        .actions .pick button.on { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+        .actions .pick ha-icon { --mdc-icon-size: 20px; }
+        .addfz { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; font-size: 14px;
+          background: color-mix(in srgb, var(--warning-color, #e69500) 14%, var(--card-background-color)); }
+        .addfz span { flex: 1 1 100%; }
+        .actions .addfz button { flex: 0 0 auto; padding: 6px 12px; }
         .name small.frozen { color: var(--primary-color); }
         .name small.frozen ha-icon { --mdc-icon-size: 14px; vertical-align: -2px; }
         .name small.missing { color: var(--warning-color, #c77700); }
@@ -560,6 +583,8 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
       else if (btn.dataset.act === "open") window.open(`${this._recipeUrl(entry.recipe)}?cook=true`, "_blank", "noopener");
       else if (btn.dataset.act === "made") this._madeIt(entry);
       else if (btn.dataset.act === "src") this._setSource(entry, btn.dataset.src);
+      else if (btn.dataset.act === "addfz") this._addToFreezer(entry);
+      else if (btn.dataset.act === "nofz") { this._noAddFz.add(id); this._render(); }
       else if (btn.dataset.act === "eaten") this._eaten(entry);
       else if (btn.dataset.act === "label") {
         this._labelOpen = this._labelOpen === id ? null : id;
@@ -616,9 +641,17 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
     const statusCls = !done && frozen ? (src.missing ? "missing" : "frozen") : "";
     const open = this._open === id;
     const switching = this._switching.has(id);
-    const choose = !done ? `<div class="src" role="group" aria-label="Cook it or from the freezer">
-        ${[["fresh", "Cook", "mdi:chef-hat"], ["freezer", "Freezer", "mdi:snowflake"]].map(([key, label, icon]) => `<button data-act="src" data-src="${key}" data-id="${id}"
-          class="${src.source === key ? "on" : ""}" aria-pressed="${src.source === key}" ${switching || busy ? "disabled" : ""}><ha-icon icon="${icon}"></ha-icon>${label}</button>`).join("")}
+    const choose = !done ? `<div class="srcrow"><span>${frozen ? "From the freezer" : "Cook fresh"}</span>
+        <span class="pick" role="group" aria-label="Cook it or from the freezer">
+        ${[["fresh", "Cook fresh", "mdi:chef-hat"], ["freezer", "From the freezer", "mdi:snowflake"]].map(([key, label, icon]) => `<button data-act="src" data-src="${key}" data-id="${id}"
+          class="${src.source === key ? "on" : ""}" aria-pressed="${src.source === key}" title="${label}" aria-label="${label}" ${switching || busy ? "disabled" : ""}><ha-icon icon="${icon}"></ha-icon></button>`).join("")}
+        </span></div>` : "";
+    // From the freezer, but the freezer stock doesn't have it: offer to add it.
+    const adding = this._addingFz.has(id);
+    const askAdd = !done && frozen && !src.can && !this._noAddFz.has(id) ? `<div class="addfz">
+        <span>The freezer stock doesn't have ${esc(r.name)}. Add it?</span>
+        <button class="primary" data-act="addfz" data-id="${id}" ${adding ? "disabled" : ""}>${adding ? "Adding…" : "Add to freezer"}</button>
+        <button data-act="nofz" data-id="${id}" ${adding ? "disabled" : ""}>No</button>
       </div>` : "";
     const madeLabel = busy ? "Taking out…" : done ? "Made" : "Made it";
     const madeIcon = done ? "mdi:check" : frozen ? "mdi:snowflake" : "mdi:chef-hat";
@@ -629,10 +662,10 @@ class FridgeAssistantMealPlanCard extends HTMLElement {
         ${done && !done.skipped ? `<ha-icon class="made" icon="mdi:check-circle"></ha-icon>` : ""}
       </button>
       ${open ? `<div class="actions">
-        ${choose}
+        ${choose}${askAdd}
         <button class="mealie" data-act="open" data-id="${id}"><img src="${esc(this._config.mealie_url)}/icons/android-chrome-192x192.png" alt=""
-          onerror="this.style.display='none'">Open in Mealie</button>
-        <button class="primary" data-act="made" data-id="${id}" ${done || busy || switching ? "disabled" : ""}>
+          onerror="this.style.display='none'">View recipe</button>
+        <button class="primary${frozen && !done ? " wide" : ""}" data-act="made" data-id="${id}" ${done || busy || switching ? "disabled" : ""}>
           <ha-icon icon="${madeIcon}"></ha-icon>${madeLabel}</button>
         ${frozen && !done ? "" : `<button data-act="label" data-id="${id}" class="${labelOpen ? "on" : ""}" aria-expanded="${labelOpen}">
           <ha-icon icon="mdi:printer-outline"></ha-icon>Print label</button>`}
@@ -879,6 +912,24 @@ class FridgeAssistantShoppingCard extends HTMLElement {
 
   _sourceSig(map = this._sourcesNow()) {
     return [...map].map(([id, x]) => `${id}:${x.source}:${x.dish ? x.dish.id : ""}:${x.missing ? 1 : 0}`).sort().join("|");
+  }
+
+  /* "From the freezer" for a meal the freezer stock doesn't have: put one in
+   * (the list follows when stock says so). */
+  async _addToFreezer(id) {
+    const entry = (this._entries || []).find((e) => String(e.mealplan_id) === id);
+    this._addingFz = this._addingFz || new Set();
+    if (!entry || !entry.recipe || this._addingFz.has(id)) return;
+    this._addingFz.add(id);
+    this._render();
+    try {
+      await addFreezerDish(this._hass, entry.recipe, null);
+    } catch (err) {
+      this._error = `Couldn't add it to the freezer: ${err.message || err}`;
+    } finally {
+      this._addingFz.delete(id);
+      this._render();
+    }
   }
 
   /* Cook it / from the freezer, for one meal (the list reloads when the
@@ -1237,6 +1288,13 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .pick button ha-icon { --mdc-icon-size: 20px; }
         .pick button.on { background: var(--card-background-color); color: var(--primary-color); box-shadow: 0 1px 2px rgba(0,0,0,.18); }
         .pick button:disabled { opacity: .5; cursor: default; }
+        .addfz { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 6px 3.2em; padding: 8px 10px; border-radius: 12px;
+          font-size: 14px; background: rgba(255, 152, 0, .12); }
+        .addfz span { flex: 1 1 100%; }
+        .addfz button { font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 10px; padding: 6px 12px;
+          border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+        .addfz button.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
+        .addfz button:disabled { opacity: .6; cursor: default; }
         .aisle { margin-top: 8px; }
         .aisle-h { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; text-transform: uppercase;
           letter-spacing: .05em; color: var(--secondary-text-color); padding: 6px 2px 2px;
@@ -1320,6 +1378,8 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       if (!btn) return;
       if (btn.dataset.act === "refresh") { this._load(true); return; }
       if (btn.dataset.act === "msrc") { this._setSource(btn.dataset.id, btn.dataset.src); return; }
+      if (btn.dataset.act === "addfz") { this._addToFreezer(btn.dataset.id); return; }
+      if (btn.dataset.act === "nofz") { (this._noAddFz = this._noAddFz || new Set()).add(btn.dataset.id); this._render(); return; }
       if (btn.dataset.act === "sec") {
         const key = btn.dataset.sec;
         if (this._collapsed.has(key)) this._collapsed.delete(key); else this._collapsed.add(key);
@@ -1554,8 +1614,14 @@ class FridgeAssistantShoppingCard extends HTMLElement {
           `<button data-act="msrc" data-id="${esc(id)}" data-src="${key}" class="${shown === key ? "on" : ""}"
             aria-pressed="${shown === key}" title="${label}" aria-label="${label}" ${busy ? "disabled" : ""}><ha-icon icon="${icon}"></ha-icon></button>`).join("")}
         </span>` : "";
+      // From the freezer, but the freezer stock doesn't have it: offer to add it.
+      const adding = this._addingFz && this._addingFz.has(id);
+      const ask = e.recipe && shown === "freezer" && !src.can && !(this._noAddFz && this._noAddFz.has(id)) ? `<div class="addfz">
+        <span>The freezer stock doesn't have ${esc(name)}. Add it?</span>
+        <button class="primary" data-act="addfz" data-id="${esc(id)}" ${adding ? "disabled" : ""}>${adding ? "Adding…" : "Add to freezer"}</button>
+        <button data-act="nofz" data-id="${esc(id)}" ${adding ? "disabled" : ""}>No</button></div>` : "";
       return `<div class="mrow${showDay ? "" : " same"}"><span class="d">${showDay ? esc(day) : ""}</span>
-        <span class="m">${esc(name)}${note ? `<small class="${src.missing ? "bad" : ""}">${esc(note)}</small>` : ""}</span>${pick}</div>`;
+        <span class="m">${esc(name)}${note && !ask ? `<small class="${src.missing ? "bad" : ""}">${esc(note)}</small>` : ""}</span>${pick}</div>${ask}`;
     };
     const mealsInner = allMeals.map(mrow).join("");
     const mealsSec = section("meals", "Meals", allMeals, "No meals planned.", mealsInner);

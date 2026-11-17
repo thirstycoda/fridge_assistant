@@ -126,7 +126,8 @@ export function recipeLines(recipe, source, date, ignore) {
  * the freezer (or fridge). The choice is kept on the meal's line on the
  * planned meals to-do list ({"mealplan_id", ..., "source": "fresh" |
  * "freezer"}), where the plan, shopping and stock cards all read it. With no
- * choice made, a meal comes from the freezer when there's a dish of it there,
+ * choice made, a meal comes from the freezer when there's a dish of it left
+ * over after the meals picked "from the freezer" have had theirs,
  * otherwise it's cooked. "Freezer" can be picked without a dish in stock (it
  * just isn't tracked); there's then nothing to take out. One dish portion is
  * one meal; portions go to meals in date order. */
@@ -175,35 +176,43 @@ export function mealSources(entries, records, items, todayIso) {
   const meals = (entries || []).filter((e) => e.recipe).slice().sort((a, b) =>
     String(a.mealplan_date).localeCompare(String(b.mealplan_date))
     || (TYPE_ORDER[a.entry_type] ?? 3) - (TYPE_ORDER[b.entry_type] ?? 3));
+  const infoOf = (e) => (records && records.get(String(e.mealplan_id)) && records.get(String(e.mealplan_id)).info) || {};
+  const choiceOf = (info) => (info.source === "fresh" || info.source === "freezer" ? info.source : null);
+  // Meals picked "from the freezer" get first go at its portions, then the
+  // undecided ones (in date order each time).
+  const pass = (wantChoice) => {
+    for (const e of meals) {
+      const id = String(e.mealplan_id);
+      const info = infoOf(e);
+      if (info.done || out.has(id) || (choiceOf(info) === "freezer") !== wantChoice) continue;
+      const choice = choiceOf(info);
+      const avail = dishes.filter((d) => isDishOf(e.recipe, d) && left.get(d.id).length);
+      const base = { choice, can: avail.length > 0 };
+      if (choice === "fresh" || (!avail.length && choice !== "freezer")) {
+        out.set(id, { ...base, source: "fresh" });
+        continue;
+      }
+      if (!avail.length) {
+        out.set(id, { ...base, source: "freezer", missing: true });
+        continue;
+      }
+      const dish = avail[0];
+      const ports = left.get(dish.id);
+      const portion = ports[0];
+      if (String(e.mealplan_date) >= todayIso) ports.shift();
+      out.set(id, {
+        ...base, source: "freezer", dish,
+        portion: (dish.portions || []).length > 1 ? portion : null,
+        left: avail.reduce((n, d) => n + left.get(d.id).length, 0),
+      });
+    }
+  };
   for (const e of meals) {
-    const id = String(e.mealplan_id);
-    const info = (records && records.get(id) && records.get(id).info) || {};
-    const ofIt = dishes.filter((d) => isDishOf(e.recipe, d));
-    if (info.done) {
-      out.set(id, { source: info.done.from === "freezer" ? "freezer" : "fresh", done: true, choice: info.source || null, can: false });
-      continue;
-    }
-    const choice = info.source === "fresh" || info.source === "freezer" ? info.source : null;
-    const avail = ofIt.filter((d) => left.get(d.id).length);
-    const base = { choice, can: avail.length > 0 };
-    if (choice === "fresh" || (!avail.length && choice !== "freezer")) {
-      out.set(id, { ...base, source: "fresh" });
-      continue;
-    }
-    if (!avail.length) {
-      out.set(id, { ...base, source: "freezer", missing: true });
-      continue;
-    }
-    const dish = avail[0];
-    const ports = left.get(dish.id);
-    const portion = ports[0];
-    if (String(e.mealplan_date) >= todayIso) ports.shift();
-    out.set(id, {
-      ...base, source: "freezer", dish,
-      portion: (dish.portions || []).length > 1 ? portion : null,
-      left: avail.reduce((n, d) => n + left.get(d.id).length, 0),
-    });
+    const info = infoOf(e);
+    if (info.done) out.set(String(e.mealplan_id), { source: info.done.from === "freezer" ? "freezer" : "fresh", done: true, choice: choiceOf(info), can: false });
   }
+  pass(true);
+  pass(false);
   return out;
 }
 
@@ -225,6 +234,15 @@ export async function setMealSource(hass, todoEntity, entry, record, source) {
       entry_type: entry.entry_type || "", date: entry.mealplan_date, source,
     }),
   }, target);
+}
+
+/* Put a planned recipe in the freezer stock as a cooked dish (one portion,
+ * one meal), for a meal marked "from the freezer" that isn't in stock. */
+export function addFreezerDish(hass, recipe, photo) {
+  return hass.callWS({
+    type: "fridge_assistant/add_item",
+    item: { name: recipe.name, contents: recipe.name, kind: "dish", location: "freezer", portions: 1, photo: photo || null },
+  });
 }
 
 /* Fridge Assistant's stock, one subscription shared by every card on the page. */

@@ -256,3 +256,22 @@ class TestUserTemplates(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShoppingStockByName(unittest.TestCase):
+    def test_molasses_meets_mealies_molass(self):
+        # Mealie singularises "pomegranate molasses" to "pomegranate molass";
+        # a jar with no template is still found by its product name.
+        store = make_store("en")
+        item = store.build_item({"name": "Epicure Pomegranate Molasses", "location": "cupboard"})
+        item["template_id"] = None
+        store.items[item["id"]] = item
+        [group] = store.stock_check([{"food": "pomegranate molass", "quantity": 1, "unit": "tablespoon"}])
+        self.assertTrue(group["in_stock"])
+        self.assertEqual(group["found"], ["Epicure Pomegranate Molasses"])
+
+    def test_stem_keeps_double_s_words(self):
+        self.assertEqual(store_mod._stem("molasses"), "molass")
+        self.assertEqual(store_mod._stem("glasses"), "glass")
+        self.assertEqual(store_mod._stem("cress"), "cress")
+        self.assertEqual(store_mod._stem("onions"), "onion")

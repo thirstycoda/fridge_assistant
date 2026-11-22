@@ -101,6 +101,10 @@ def _stem(word: str) -> str:
         return word[:-3] + "y"
     if len(word) > 4 and word.endswith("oes"):
         return word[:-2]
+    if len(word) > 5 and word.endswith("sses"):
+        # "molasses" (and "glasses") meet "molass" / "glass": Mealie singularises
+        # "pomegranate molasses" to "pomegranate molass".
+        return word[:-2]
     if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
         return word[:-1]
     return word

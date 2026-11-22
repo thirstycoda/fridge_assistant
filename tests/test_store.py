@@ -275,3 +275,24 @@ class TestShoppingStockByName(unittest.TestCase):
         self.assertEqual(store_mod._stem("glasses"), "glass")
         self.assertEqual(store_mod._stem("cress"), "cress")
         self.assertEqual(store_mod._stem("onions"), "onion")
+
+
+class TestSpellings(unittest.TestCase):
+    def test_us_and_uk_spellings_meet(self):
+        store = make_store("en")
+        store.upsert_user_template({"id": "vegan-yoghurt", "name": "Vegan yoghurt",
+                                    "aliases": ["soya yoghurt"], "category": "dairy"})
+        for food in ("soy yogurt", "vegan yogurt", "soya yoghurt", "Vegan Yoghurts"):
+            tpl = store.match_ingredient(food)
+            self.assertIsNotNone(tpl, food)
+            self.assertEqual(tpl["id"], "vegan-yoghurt", food)
+
+    def test_chilli_spellings(self):
+        for word in ("chilli", "chillies", "chili", "chilies", "chile"):
+            self.assertEqual(store_mod._stem(word), "chilli", word)
+
+    def test_soy_sauce_still_soy_sauce(self):
+        store = make_store("en")
+        store.upsert_user_template({"id": "soy-sauce", "name": "Soy sauce", "category": "sauces_spices"})
+        self.assertEqual(store.match_ingredient("soya sauce")["id"], "soy-sauce")
+        self.assertEqual(store.match_ingredient("soy sauce")["id"], "soy-sauce")

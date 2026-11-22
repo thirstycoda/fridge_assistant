@@ -95,8 +95,22 @@ def _tokens(text: str) -> set[str]:
     return {t for t in _normalize(text).split() if t and t not in _STOP}
 
 
+# Spellings of the same food (US / UK, soy / soya), after plurals are folded:
+# recipes say "soy yogurt" and "chili", stock says "soya yoghurt" and "chilli".
+_SPELLINGS = {
+    "yogurt": "yoghurt", "yoghourt": "yoghurt",
+    "soy": "soya",
+    "chili": "chilli", "chile": "chilli", "chily": "chilli", "chilly": "chilli",
+}
+
+
 def _stem(word: str) -> str:
-    """Fold simple English plurals so 'onions' meets 'onion' and 'berries' meets 'berry'."""
+    """Fold simple English plurals so 'onions' meets 'onion' and 'berries' meets
+    'berry', and spellings of the same food ('yogurt' meets 'yoghurt')."""
+    return _SPELLINGS.get(_plural(word), _plural(word))
+
+
+def _plural(word: str) -> str:
     if len(word) > 4 and word.endswith("ies"):
         return word[:-3] + "y"
     if len(word) > 4 and word.endswith("oes"):

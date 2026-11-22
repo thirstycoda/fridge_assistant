@@ -734,16 +734,21 @@ if (!customElements.get("fridge-assistant-meal-plan-card")) {
 
 /* ---- Shopping list card ---------------------------------------------------
  *
- * A week's meal plan as a shopping list in four sections: Need (what the
- * recipes and notes use and stock doesn't cover), Check (stock covers it, but it's
- * worth a look: opened, a guessed amount, used day to day, only just enough,
- * may go off, or not checked for a month), Have, and Added (in the basket). Tap an ingredient to see the
- * meals it's for and move it between sections. Have asks how much there is
- * and where, and adds it to Fridge Assistant (setting the food up when it
- * isn't tracked yet), so stock stays the source of truth; Need on something
- * in Have takes it back out. The list follows stock changes as they happen.
- * "Added" (in the basket) marks are shared by everyone and lapse after a
- * week. The list moves on by itself: past days drop off just after midnight.
+ * A week's meal plan as a shopping list in three sections. Need is what the
+ * rest of the week's cooked meals use that stock doesn't cover (only the
+ * missing part when there's some). Have is what stock covers, with how much
+ * there is. Added is what's in the basket; it clears once the delivery is
+ * put away (unpacked). Tap an ingredient to see the meals it's for, then:
+ *   Need  → Added (in the basket) or Have (asks how much you have),
+ *   Have  → Need (asks how much you have: 0 is none; any less than needed
+ *           shows the rest under Need),
+ *   Added → Undo (back to Need).
+ * "How much you have" is saved to Fridge Assistant as the stock of it
+ * (setting the food up when it isn't tracked yet), so stock stays the source
+ * of truth. Every tap moves the line straight away; if saving fails it moves
+ * back and says so. The list follows stock changes as they happen. "Added"
+ * marks are shared by everyone. The list moves on by itself: past days drop
+ * off just after midnight.
  * At the top, the week's meals, each switched between cook it (chef's hat)
  * and from the freezer (snowflake; the default when a cooked dish of it is
  * there). Only the cooked ones' ingredients are on the list.
@@ -804,21 +809,6 @@ function recipeIssues(recipe) {
   return [...new Set(issues)];
 }
 
-const CHECK_TEXT = {
-  expires: "may go off before it's used",
-  untracked: "amount isn't tracked",
-  guessed: "amount is the usual pack size, never checked",
-  opened: "opened",
-  everyday: "used day to day too",
-  tight: "only just enough",
-  stale: "not checked for a month",
-  units: "the recipe's amount doesn't convert to what's kept",
-};
-function checkText(g) {
-  const parts = (g.check || []).map((r) => CHECK_TEXT[r] || r);
-  return parts.length ? `Worth a look: ${parts.join(" · ")}` : "";
-}
-
 // Aisles and food emoji, shared with the unpack card (same version as this file).
 const { AISLES, aisleOf, foodEmoji } = await import(new URL(`./lib/food-look.js${new URL(import.meta.url).search}`, import.meta.url));
 
@@ -844,9 +834,9 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     this._open = this._open || null;
     this._recipes = this._recipes || new Map();
     this._form = this._form || null;
-    this._notice = this._notice || null;
     this._records = this._records || new Map();
     this._stockItems = this._stockItems || null;
+    this._overrides = this._overrides || new Map();
     if (!this._collapsed) {
       // Which sections are folded away, remembered on this device.
       try { this._collapsed = new Set(JSON.parse(localStorage.getItem("fridge-assistant-shopping-collapsed") || "[]")); }
@@ -1077,119 +1067,99 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     }
   }
 
+  /* Units "how much do you have" can be given in: the food's own (and its
+   * kg / l), so the line can move straight away. */
   _unitsFor(g) {
-    const family = (u) => (u === "g" || u === "kg" ? ["g", "kg"] : u === "ml" || u === "l" ? ["ml", "l"] : [u]);
     if (!g.unit) return g.spoons ? ["g", "ml", "each"] : ["each", "g", "ml"];
-    const out = [...family(g.unit)];
-    for (const k of g.per || []) {
-      if (k === "g" || k === "ml") out.push(...family(k));
-      else if (["each", "can", "tin", "pot", "block", "pack", "bottle", "jar"].includes(k)) out.push(k);
-    }
-    return [...new Set(out)];
+    return g.unit === "g" ? ["g", "kg"] : g.unit === "ml" ? ["ml", "l"] : [g.unit];
   }
 
-  _openHave(group) {
+  /* Have (from Need) or Need (from Have): ask how much there is. */
+  _openAmount(group, sec) {
     const units = this._unitsFor(group);
-    // Already in stock: start from what's recorded, to be corrected to the total.
-    const amount = group.unit ? (group.in_stock && group.stock > 0 ? group.stock : (group.pack_amount || group.short || "")) : "";
-    this._form = { key: group.key, amount: amount === "" ? "" : String(amount), unit: group.unit || units[0] };
-    this._notice = null;
+    const amount = group.unit && group.stock > 0 ? group.stock
+      : sec === "need" ? (group.need || group.pack_amount || "") : "";
+    this._form = { key: group.key, sec, amount: amount === "" ? "" : String(amount), unit: group.unit || units[0] };
     this._render();
+    setTimeout(() => {
+      const el = this.shadowRoot && this.shadowRoot.querySelector('.haveform input[data-field="amount"]');
+      if (el) { el.focus(); el.select(); }
+    }, 30);
   }
 
-  /* We have it: put it in Fridge Assistant (creating the food when it isn't
-   * tracked yet), or, when some is already in stock, set the stock to this
-   * total. Either way it moves to Have when there's enough. */
-  async _have(group, location) {
+  /* What the line looks like with `amount` in stock, before Fridge Assistant
+   * has said so. */
+  _expected(g, amount, unit) {
+    if (!(amount > 0)) return { in_stock: false, stock: g.unit ? 0 : g.stock, have: 0, short: g.need, found: [] };
+    if (!g.unit) return { in_stock: true };
+    const base = unit === "kg" || unit === "l" ? amount * 1000 : amount;
+    const have = Math.min(g.need, Math.max(base - (g.reserved || 0), 0));
+    return { in_stock: true, stock: base, have, short: Math.max(g.need - have, 0) };
+  }
+
+  /* Save "we have this much": the line moves now, Fridge Assistant's stock is
+   * set behind it, and the line moves back if that fails. */
+  async _saveAmount(group, location) {
     const f = this._form;
-    const amount = Number(f && f.amount);
-    if (!f || !(amount > 0)) { this._notice = { key: group.key, text: "How much do you have?", bad: true }; this._render(); return; }
-    this._busy = true; this._render();
+    if (!f || this._overrides.has(group.key)) return;
+    const amount = f.amount === "" ? NaN : Number(f.amount);
+    if (Number.isNaN(amount) || amount < 0) { this._flashMsg("How much do you have? (0 if none)"); return; }
+    if (!(amount > 0) && !group.in_stock) { this._form = null; this._open = null; this._render(); return; }
+    if (!(amount > 0) && !group.unit) {
+      this._flashMsg(`${group.name} isn't measured in Fridge Assistant, so it can't be set to none here.`);
+      return;
+    }
+    if (amount > 0 && !group.in_stock && location === undefined) return;   // asks where first
+    this._overrides.set(group.key, this._expected(group, amount, f.unit));
+    this._form = null; this._open = null;
+    this._render();
     try {
-      const food = group.tracked ? group.name : (group.sources[0] && group.sources[0].food) || group.name;
-      const res = await this._hass.callWS({
-        type: "fridge_assistant/stock_have", food, amount, unit: f.unit, location: location || null,
-        template_id: group.template_id || null, spoons: !!group.spoons,
-      });
-      if (this._marks[group.key]) {
-        await this._hass.callWS({ type: "fridge_assistant/set_shopping_mark", key: group.key, state: null }).catch(() => {});
+      if (amount > 0) {
+        const food = group.tracked ? group.name : (group.sources[0] && group.sources[0].food) || group.name;
+        await this._hass.callWS({
+          type: "fridge_assistant/stock_have", food, amount, unit: f.unit, location: location || null,
+          template_id: group.template_id || null, spoons: !!group.spoons,
+        });
+      } else {
+        await this._hass.callWS({ type: "fridge_assistant/confirm_stock", template_id: group.template_id, amount: 0, unit: group.unit });
       }
-      const where = (it) => ({ cupboard: "the cupboard", fridge: "the fridge", freezer: "the freezer", pantry: "the pantry" }[it.location] || it.location);
-      this._notice = { key: `t:${res.template.id}`, text: res.updated
-        ? `${res.template.name}: ${amountText(amount, f.unit)} in stock now`
-        : `Added ${amountText(amount, f.unit)} ${res.item.name.toLowerCase()} to ${where(res.item)} (${res.item.code})` };
-      this._form = null; this._open = null;
       await this._restock();
+      this._overrides.delete(group.key);
+      this._render();
     } catch (err) {
-      this._notice = { key: group.key, text: `Couldn't add it: ${err.message || err}`, bad: true };
-    } finally {
-      this._busy = false; this._render();
+      this._overrides.delete(group.key);
+      this._flashMsg(`Couldn't save ${group.name.toLowerCase()}: ${err.message || err}`);
     }
   }
 
-  /* It's gone after all (eaten, used): take the covered amount out of Fridge
-   * Assistant, which moves it to Need. */
-  async _backToNeed(group) {
-    this._busy = true; this._render();
-    try {
-      await this._hass.callWS({
-        type: "call_service", domain: "fridge_assistant", service: "consume_ingredients",
-        service_data: { ingredients: [{ food: group.name, template_id: group.template_id, quantity: group.have, unit: group.unit }] },
-        return_response: true,
-      });
-      this._notice = { key: group.key, text: `Took ${amountText(group.have, group.unit)} ${group.name.toLowerCase()} out of Fridge Assistant` };
-      this._open = null;
-      await this._restock();
-    } catch (err) {
-      this._notice = { key: group.key, text: `Couldn't take it out: ${err.message || err}`, bad: true };
-    } finally {
-      this._busy = false; this._render();
-    }
+  /* A message across the top of the list for a few seconds. */
+  _flashMsg(text) {
+    this._flash = text;
+    this._render();
+    clearTimeout(this._flashTimer);
+    this._flashTimer = setTimeout(() => { this._flash = null; this._render(); }, 6000);
   }
 
-  /* Looked in the cupboard: what's there is right (or this much). */
-  async _confirm(group) {
-    const f = this._form || {};
-    const amount = f.amount === "" || f.amount == null ? null : Number(f.amount);
-    this._busy = true; this._render();
-    try {
-      const msg = { type: "fridge_assistant/confirm_stock", template_id: group.template_id };
-      if (group.unit && amount != null && !Number.isNaN(amount)) { msg.amount = amount; msg.unit = f.unit || group.unit; }
-      await this._hass.callWS(msg);
-      this._notice = { key: group.key, text: `${group.name}: checked` };
-      this._form = null; this._open = null;
-      await this._restock();
-    } catch (err) {
-      this._notice = { key: group.key, text: `Couldn't save it: ${err.message || err}`, bad: true };
-    } finally {
-      this._busy = false; this._render();
-    }
-  }
-
-  /* Move the line straight away and tell Fridge Assistant behind it; if
-   * that fails the line goes back where it was. */
+  /* Added / Undo: move the line straight away and tell Fridge Assistant
+   * behind it; if that fails the line goes back where it was. */
   async _mark(group, state) {
     const before = this._marks[group.key];
-    const sticky = state === "have" && !group.unit;
     const marks = { ...this._marks };
-    if (state) marks[group.key] = { state, at: new Date().toISOString(), sticky };
+    if (state) marks[group.key] = { state, at: new Date().toISOString(), sticky: false };
     else delete marks[group.key];
     this._marks = marks;
     this._open = null;
     this._render();
     const seq = (this._markSeq = (this._markSeq || 0) + 1);
     try {
-      const res = await this._hass.callWS({
-        type: "fridge_assistant/set_shopping_mark", key: group.key, state, sticky,
-      });
+      const res = await this._hass.callWS({ type: "fridge_assistant/set_shopping_mark", key: group.key, state });
       // A later tap's answer wins over an earlier one.
       if (seq === this._markSeq) { this._marks = res.marks || this._marks; this._render(); }
     } catch (err) {
       const back = { ...this._marks };
       if (before) back[group.key] = before; else delete back[group.key];
       this._marks = back;
-      this._error = `Couldn't save that: ${err.message || err}`;
-      this._render();
+      this._flashMsg(`Couldn't save that: ${err.message || err}`);
     }
   }
 
@@ -1209,53 +1179,49 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     } catch (e) { return 0; }
   }
 
-  /* A mark still in force: an "Added" from before the last delivery lapses. */
+  /* The basket mark still in force: "Added" from before the last delivery
+   * lapses (it's arrived). */
   _markFor(key) {
     const m = this._marks[key];
-    if (m && m.state === "added" && this._delivered && Date.parse(m.at) < this._delivered) return null;
+    if (!m || m.state !== "added") return null;
+    if (this._delivered && Date.parse(m.at) < this._delivered) return null;
     return m;
   }
 
-  /* Split every group into its Need / Added / Have rows. */
+  /* Split every group into its Need / Have / Added rows (with any change
+   * still being saved shown already). */
   _rows() {
-    const need = []; const check = []; const have = []; const added = [];
-    for (const g of this._groups || []) {
+    const need = []; const have = []; const added = [];
+    for (const g0 of this._groups || []) {
+      const g = this._overrides.has(g0.key) ? { ...g0, ...this._overrides.get(g0.key) } : g0;
       const mark = this._markFor(g.key);
       const other = Object.entries(g.other || {}).map(([u, q]) => amountText(q, u)).filter(Boolean);
       const measured = Boolean(g.unit) && (g.need > 0 || other.length > 0);
-      let missing = "";     // what to get ("" = nothing)
-      let covered = "";     // what stock covers ("" = nothing)
-      let units = false;   // stock there, but the recipe's amount doesn't convert
+      const stockText = g.unit && g.stock > 0 ? amountText(g.stock, g.unit) : "";
+      let missing = "";    // what to get ("" = nothing)
+      let got = "";        // how much we have ("" = none)
       if (!g.tracked) {
         // No food for it in Fridge Assistant: in stock if a product's name
         // has it ("brown rice" in "Biona … Brown Rice"), else to get.
-        if (g.in_stock) covered = g.found && g.found.length ? `in stock (${g.found.join(", ")})` : "in stock";
+        if (g.in_stock) got = g.found && g.found.length ? `in stock (${g.found.join(", ")})` : "in stock";
         else missing = other.join(" + ") || "to taste";
       } else if (!measured) {
         // Known food without amounts (or only "to taste"): stock or not.
-        if (g.in_stock || (g.stock || 0) > 0) covered = "in stock"; else missing = other.join(" + ") || "some";
+        if (g.in_stock || (g.stock || 0) > 0) got = stockText || "in stock"; else missing = other.join(" + ") || "some";
       } else {
         const parts = [];
         if (g.short > 0) parts.push(amountText(g.short, g.unit));
-        // Amounts that don't convert (80 g of a food kept in pieces): with
-        // some in stock that's one to check, not one to buy.
-        if (other.length && (g.stock || 0) > 0) units = true;
-        else parts.push(...other);
+        // Amounts that don't convert (a can of a food kept in grams): with
+        // some in stock, count it as had.
+        const odd = other.length && (g.stock || 0) > 0;
+        if (!odd) parts.push(...other);
         missing = parts.join(" + ");
-        if (g.have > 0) covered = amountText(g.have, g.unit);
-        if (units) covered = [covered, `${other.join(" + ")} (have ${amountText(g.stock, g.unit)})`].filter(Boolean).join(" + ");
+        if (g.have > 0 || odd) got = stockText;
       }
-      const total = [g.unit && g.need ? amountText(g.need, g.unit) : "", ...other].filter(Boolean).join(" + ")
-        || (g.to_taste ? "to taste" : "");
-      const stock = g.stock != null ? amountText(g.stock, g.unit) || "none" : "";
-      if (mark && mark.state === "have") { have.push({ g, text: total, marked: true, stock }); continue; }
-      if (missing) (mark && mark.state === "added" ? added : need).push({ g, text: missing, stock });
-      if (covered) {
-        const gg = units ? { ...g, check: [...(g.check || []), "units"] } : g;
-        ((gg.check && gg.check.length) ? check : have).push({ g: gg, text: covered, stock });
-      }
+      if (missing) (mark ? added : need).push({ g, text: missing });
+      if (got) have.push({ g, text: got });
     }
-    return { need, check, have, added };
+    return { need, have, added };
   }
 
   _build() {
@@ -1278,7 +1244,6 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .sec-h .count { margin-left: auto; margin-right: -2px; font-size: 13px; font-weight: 600; color: var(--accent);
           background: var(--card-background-color); border-radius: 999px; padding: 1px 9px; }
         .sec.need { --accent: var(--primary-color); }
-        .sec.check { --accent: var(--warning-color, #e69500); }
         .sec.have { --accent: var(--success-color, #43a047); }
         .sec.added { --accent: var(--secondary-text-color); }
         .sec.meals { --accent: var(--secondary-text-color); }
@@ -1341,7 +1306,6 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .btns button.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: transparent; }
         .btns ha-icon { --mdc-icon-size: 18px; }
         .empty { color: var(--secondary-text-color); font-size: 14px; padding: 6px 2px; }
-        .why { font-size: 13px; color: var(--warning-color, #c77700); margin-top: 6px; }
         .warn { margin-top: 12px; padding: 8px 12px; border-radius: 12px; font-size: 14px;
           background: rgba(255, 152, 0, .12); }
         .warn summary { cursor: pointer; display: flex; align-items: center; gap: 6px; }
@@ -1367,8 +1331,13 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         .links { display: flex; justify-content: space-between; margin-top: 8px; }
         .link { background: none; border: none; padding: 4px 0; font: inherit; font-size: 13px; color: var(--secondary-text-color);
           cursor: pointer; text-decoration: underline; }
-        .notice { font-size: 13px; padding: 8px 2px 0; color: var(--success-color, #43a047); }
-        .notice.bad { color: var(--error-color); }
+        .row.saving { opacity: .6; }
+        /* Stays in view while scrolled down to the line that failed. */
+        .flash { position: sticky; top: 8px; z-index: 2; display: flex; align-items: center; gap: 8px; margin-top: 12px;
+          padding: 10px 12px; border-radius: 12px; font-size: 14px; color: var(--error-color, #db4437);
+          background: color-mix(in srgb, var(--error-color, #db4437) 12%, var(--card-background-color, #fff));
+          box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
+        .flash ha-icon { --mdc-icon-size: 20px; flex: 0 0 auto; }
         .err { margin-top: 12px; color: var(--error-color); font-size: 14px; }
       </style>
       <ha-card><div id="body"></div></ha-card>`;
@@ -1379,6 +1348,13 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     };
     body.addEventListener("input", onField);
     body.addEventListener("change", onField);
+    // Enter in "how much" saves (where it's already in stock; else pick a place).
+    body.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" || !ev.target.matches || !ev.target.matches('.haveform input[data-field="amount"]')) return;
+      ev.preventDefault();
+      const save = this.shadowRoot.querySelector('.haveform [data-act="save"]:not([data-loc])');
+      if (save) save.click();
+    });
     body.addEventListener("toggle", (ev) => {
       if (ev.target.classList && ev.target.classList.contains("warn")) this._warnOpen = ev.target.open;
     }, true);
@@ -1405,19 +1381,12 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       const group = (this._groups || []).find((g) => g.key === btn.dataset.key);
       if (!group) return;
       const rowId = `${btn.dataset.sec}|${group.key}`;
-      if (btn.dataset.act === "toggle") { this._open = this._open === rowId ? null : rowId; this._form = null; this._notice = null; this._render(); }
-      if (this._busy) return;
+      if (btn.dataset.act === "toggle") { this._open = this._open === rowId ? null : rowId; this._form = null; this._render(); }
       else if (btn.dataset.act === "added") this._mark(group, "added");
-      else if (btn.dataset.act === "have") this._openHave(group);
-      else if (btn.dataset.act === "havewhere") this._have(group, btn.dataset.loc);
-      else if (btn.dataset.act === "cancelhave") { this._form = null; this._render(); }
-      else if (btn.dataset.act === "need") this._mark(group, null);
-      else if (btn.dataset.act === "gone") this._backToNeed(group);
-      else if (btn.dataset.act === "still") {
-        this._form = { key: group.key, amount: group.stock != null ? String(group.stock) : "", unit: group.unit };
-        this._notice = null;
-        this._render();
-      } else if (btn.dataset.act === "confirm") this._confirm(group);
+      else if (btn.dataset.act === "undo") this._mark(group, null);
+      else if (btn.dataset.act === "have" || btn.dataset.act === "need") this._openAmount(group, btn.dataset.sec);
+      else if (btn.dataset.act === "save") this._saveAmount(group, btn.dataset.loc === undefined ? (group.in_stock ? null : undefined) : btn.dataset.loc);
+      else if (btn.dataset.act === "cancel") { this._form = null; this._render(); }
     });
   }
 
@@ -1426,6 +1395,7 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     const rowId = `${sec}|${g.key}`;
     const open = this._open === rowId;
     const k = esc(g.key);
+    const saving = this._overrides.has(g.key);
     let detail = "";
     if (open) {
       const meals = g.sources.map((s) => {
@@ -1433,29 +1403,20 @@ class FridgeAssistantShoppingCard extends HTMLElement {
         return `<span>${esc(s.source || s.food)}${amt ? ` — <b>${esc(amt)}</b>` : ""}</span>`;
       }).join("");
       const b = (act, label, icon, primary) =>
-        `<button data-act="${act}" data-key="${k}" data-sec="${sec}" class="${primary ? "primary" : ""}"><ha-icon icon="${icon}"></ha-icon>${label}</button>`;
-      let btns = "";
-      if (sec === "need") btns = b("added", "Added", "mdi:basket-plus-outline", true) + b("have", "Have", "mdi:check");
-      else if (sec === "check") btns = b("still", "Still there", "mdi:check", true) + (g.unit && g.have > 0 ? b("gone", "Need", "mdi:cart-arrow-down") : "");
-      else if (sec === "added") btns = b("have", "Have", "mdi:check") + b("need", "Back to Need", "mdi:undo");
-      else if (row.marked) btns = b("need", "Back to Need", "mdi:undo");
-      else if (g.unit && g.have > 0) btns = b("gone", "Need", "mdi:cart-arrow-down");
+        `<button data-act="${act}" data-key="${k}" data-sec="${sec}" class="${primary ? "primary" : ""}" ${saving ? "disabled" : ""}><ha-icon icon="${icon}"></ha-icon>${label}</button>`;
+      const btns = sec === "need" ? b("added", "Added", "mdi:basket-plus-outline", true) + b("have", "Have", "mdi:check")
+        : sec === "have" ? b("need", "Need", "mdi:cart-arrow-down")
+          : b("undo", "Undo", "mdi:undo");
       const kept = g.reserved > 0 && g.unit ? ` · ${esc(amountText(g.reserved, g.unit))} kept for meals before then` : "";
-      const stock = row.stock ? `<div class="stockline">In stock: ${esc(row.stock)}${kept}</div>` : "";
-      const why = sec === "check" && g.check ? `<div class="why">${esc(checkText(g))}</div>` : "";
-      const gone = (sec === "have" || sec === "check") && !row.marked && g.unit && g.have > 0
-        ? `<div class="stockline">Need takes ${esc(amountText(g.have, g.unit))} out of Fridge Assistant.</div>` : "";
-      const form = this._form && this._form.key === g.key && (sec === "need" || sec === "added") ? this._haveFormHtml(g, sec)
-        : this._form && this._form.key === g.key && sec === "check" ? this._stillFormHtml(g, sec) : "";
-      detail = `<div class="detail"><div class="meals">${meals}</div>${why}${stock}${gone}${form || (btns ? `<div class="btns">${btns}</div>` : "")}</div>`;
+      const stock = g.unit && g.stock > 0 ? `<div class="stockline">Have ${esc(amountText(g.stock, g.unit))}${kept}</div>` : "";
+      const form = this._form && this._form.key === g.key && this._form.sec === sec ? this._amountFormHtml(g, sec) : "";
+      detail = `<div class="detail"><div class="meals">${meals}</div>${stock}${form || `<div class="btns">${btns}</div>`}</div>`;
     }
-    const note = this._notice && this._notice.key === g.key
-      ? `<div class="notice ${this._notice.bad ? "bad" : ""}">${esc(this._notice.text)}</div>` : "";
     const aisle = aisleOf(g);
     const thumb = g.photo
       ? `<img class="th" src="${esc(g.photo)}" alt="" loading="lazy">`
       : `<span class="th emo" style="--tint:${aisle.color}">${esc((g.emoji && g.emoji !== "🍽️" ? g.emoji : null) || foodEmoji(g.name) || aisle.emoji)}</span>`;
-    return `${note}<div class="row">
+    return `<div class="row${saving ? " saving" : ""}">
       <button class="line" data-act="toggle" data-key="${k}" data-sec="${sec}" aria-expanded="${open}">
         ${thumb}<span class="n">${esc(g.name)}</span><span class="a">${esc(row.text)}</span>
       </button>${detail}</div>`;
@@ -1514,51 +1475,31 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     return base ? `${base}/household/mealplan/planner/edit` : "#";
   }
 
-  _stillFormHtml(g, sec) {
-    const f = this._form;
-    const k = esc(g.key);
-    const units = g.unit ? this._unitsFor(g) : [];
-    return `<div class="haveform">
-      ${g.unit ? `<div class="amtrow"><span>How much is there?</span>
-        <input data-field="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(f.amount)}">
-        <select data-field="unit">${units.map((u) => `<option value="${esc(u)}"${u === f.unit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
-      </div>` : ""}
-      <div class="btns">
-        <button class="primary" data-act="confirm" data-key="${k}" data-sec="${sec}" ${this._busy ? "disabled" : ""}><ha-icon icon="mdi:check"></ha-icon>That's right</button>
-        <button data-act="cancelhave" data-key="${k}" data-sec="${sec}">Cancel</button>
-      </div>
-    </div>`;
-  }
-
-  _haveFormHtml(g, sec) {
+  /* "How much do you have?" — from Need (Have) or Have (Need). Something
+   * not in stock yet also needs a place to go. */
+  _amountFormHtml(g, sec) {
     const f = this._form;
     const k = esc(g.key);
     const units = this._unitsFor(g);
-    if (g.in_stock) {
-      // Some is already in stock: this is the total, saved where it already is.
-      return `<div class="haveform">
-      <div class="amtrow"><span>How much is there in total?</span>
+    const amountRow = `<div class="amtrow"><span>How much do you have?${sec === "have" ? " (0 if none)" : ""}</span>
         <input data-field="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(f.amount)}" placeholder="?">
         <select data-field="unit">${units.map((u) => `<option value="${esc(u)}"${u === f.unit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
-      </div>
+      </div>`;
+    if (g.in_stock) {
+      return `<div class="haveform">${amountRow}
       <div class="btns">
-        <button class="primary" data-act="havewhere" data-loc="" data-key="${k}" data-sec="${sec}" ${this._busy ? "disabled" : ""}><ha-icon icon="mdi:check"></ha-icon>Save</button>
-        <button data-act="cancelhave" data-key="${k}" data-sec="${sec}">Cancel</button>
-      </div>
-    </div>`;
+        <button class="primary" data-act="save" data-key="${k}" data-sec="${sec}"><ha-icon icon="mdi:check"></ha-icon>Save</button>
+        <button data-act="cancel" data-key="${k}" data-sec="${sec}">Cancel</button>
+      </div></div>`;
     }
     const locs = [["cupboard", "Cupboard", "mdi:cupboard-outline"], ["fridge", "Fridge", "mdi:fridge"],
       ["freezer", "Freezer", "mdi:snowflake"], ["pantry", "Pantry", "mdi:basket-outline"]];
-    return `<div class="haveform">
-      <div class="amtrow"><span>How much do you have?</span>
-        <input data-field="amount" type="number" inputmode="decimal" min="0" step="any" value="${esc(f.amount)}" placeholder="?">
-        <select data-field="unit">${units.map((u) => `<option value="${esc(u)}"${u === f.unit ? " selected" : ""}>${esc(u)}</option>`).join("")}</select>
-      </div>
+    return `<div class="haveform">${amountRow}
       <div class="sub2">Where is it?</div>
-      <div class="locs">${locs.map(([key, label, icon]) => `<button data-act="havewhere" data-loc="${key}" data-key="${k}" data-sec="${sec}"
-        class="${g.location === key ? "sug" : ""}" ${this._busy ? "disabled" : ""}><ha-icon icon="${icon}"></ha-icon>${label}</button>`).join("")}</div>
+      <div class="locs">${locs.map(([key, label, icon]) => `<button data-act="save" data-loc="${key}" data-key="${k}" data-sec="${sec}"
+        class="${g.location === key ? "sug" : ""}"><ha-icon icon="${icon}"></ha-icon>${label}</button>`).join("")}</div>
       <div class="links">
-        <button class="link" data-act="cancelhave" data-key="${k}" data-sec="${sec}">Cancel</button>
+        <button class="link" data-act="cancel" data-key="${k}" data-sec="${sec}">Cancel</button>
       </div>
     </div>`;
   }
@@ -1581,13 +1522,13 @@ class FridgeAssistantShoppingCard extends HTMLElement {
       body.innerHTML = head + (this._error ? `<div class="err">${esc(this._error)}</div>` : `<div class="empty">Loading…</div>`);
       return;
     }
-    const { need, check, have, added } = this._rows();
+    const { need, have, added } = this._rows();
     const byAisle = (key, rows) => AISLES.map((a) => {
       const these = rows.filter((r) => aisleOf(r.g) === a);
       return these.length ? `<div class="aisle"><div class="aisle-h" style="--tint:${a.color}"><span>${a.emoji}</span>${esc(a.name)}</div>
         ${these.map((r) => this._rowHtml(key, r)).join("")}</div>` : "";
     }).join("");
-    const ICONS = { need: "mdi:cart-outline", check: "mdi:magnify", have: "mdi:check-circle-outline", added: "mdi:basket-check-outline",
+    const ICONS = { need: "mdi:cart-outline", have: "mdi:check-circle-outline", added: "mdi:basket-check-outline",
       meals: "mdi:silverware-fork-knife" };
     const section = (key, label, rows, empty, inner) => {
       const shut = this._collapsed.has(key);
@@ -1636,15 +1577,15 @@ class FridgeAssistantShoppingCard extends HTMLElement {
     const mealsSec = section("meals", "Meals", allMeals, "No meals planned.", mealsInner);
     const toGet = need.length + added.length;
     const progress = toGet ? `<div class="progress"><div class="bar"><span style="width:${Math.round(added.length / toGet * 100)}%"></span></div>
-      <div class="ptext">${added.length} of ${toGet} in the basket${check.length ? ` · ${check.length} to check` : ""}</div></div>` : "";
+      <div class="ptext">${added.length} of ${toGet} in the basket</div></div>` : "";
     const warn = (this._warnings || []).length ? `<details class="warn"${this._warnOpen ? " open" : ""}><summary><ha-icon icon="mdi:alert-outline"></ha-icon>
         ${this._warnings.length} ${this._warnings.every((w) => w.note) ? "note" : this._warnings.some((w) => w.note) ? "recipe or note" : "recipe"}${this._warnings.length === 1 ? "" : "s"} to tidy in Mealie, so the list is right</summary>
         ${this._warnings.map((w) => `<div class="wrec"><a href="${esc(w.note ? this._plannerLink() : this._recipeLink(w.slug))}" target="_blank" rel="noopener">${esc(w.name)}</a>
           <ul>${w.issues.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`).join("")}</details>` : "";
-    body.innerHTML = head + progress + warn + mealsSec
+    const flash = this._flash ? `<div class="flash" role="alert"><ha-icon icon="mdi:alert-circle-outline"></ha-icon>${esc(this._flash)}</div>` : "";
+    body.innerHTML = head + flash + progress + warn + mealsSec
       + section("need", "Need", need, "Nothing else to get.")
-      + section("check", "Check", check, "Nothing to check.")
-      + section("have", "Have", have, "Nothing from stock yet.")
+      + section("have", "Have", have, "Nothing in stock for it yet.")
       + section("added", "Added", added, "Nothing in the basket yet.")
       + (this._error ? `<div class="err">${esc(this._error)}</div>` : "");
   }

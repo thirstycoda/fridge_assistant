@@ -87,7 +87,10 @@ function fmtDay(iso) {
 
 const byExpiry = (a, b) => (a.days_left == null) - (b.days_left == null) || (a.days_left ?? 0) - (b.days_left ?? 0)
   || String(a.added_date || "").localeCompare(String(b.added_date || ""));
-const groupKey = (i) => i.template_id || `n:${String(i.name || "").trim().toLowerCase()}`;
+/* One row per food *and* name: two dishes linked to the same template
+ * ("Evie's Lentil Ragu" and "Lentil Bolognese") stay apart, so tapping one
+ * can't take out the other. */
+const groupKey = (i) => `${i.template_id || ""}|${String(i.name || "").trim().toLowerCase().replace(/\s+/g, " ")}`;
 const portionsOf = (i) => (Array.isArray(i.portions) && i.portions.length ? i.portions : [{ n: 1, status: "open" }]);
 const openPortions = (i) => portionsOf(i).filter((p) => p.status === "open").map((p) => p.n);
 const realEmoji = (e) => (e && e !== "🍽️" ? e : null);
